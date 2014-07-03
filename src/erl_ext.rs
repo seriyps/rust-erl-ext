@@ -45,10 +45,11 @@ enum ErlTermTag {
     SMALL_ATOM_UTF8_EXT = 119,
 }
 
+//#[deriving(PartialOrd, PartialEq, Ord, Eq)]
 pub enum Eterm {
     SmallInteger(u8),           // small_integer
     Integer(int),               // integer
-    Float(f64),                 // float, new_float
+    // Float(f64),                 // float, new_float
     Atom(Atom),                 // atom, small_atom, atom_utf8, small_atom_utf8
     Reference {                 // reference, new_reference
         node: Atom,
@@ -60,6 +61,7 @@ pub enum Eterm {
         creation: u8},
     Pid(Pid),                   // pid
     Tuple(Tuple),               // small_tuple, large_tuple
+    Map(EMap),                  // map
     Nil,                        // nil
     String(String),             // string
     List(List),                 // list
@@ -89,9 +91,11 @@ pub enum Eterm {
 }
 pub type Atom = String;
 pub type Tuple = Vec<Eterm>;
-pub type EMap = TreeMap<Eterm, Eterm>;
+pub type EMap = Vec<(Eterm, Eterm)>; // k-v pairs //TreeMap<Eterm, Eterm>;
 pub type List = Vec<Eterm>;
-pub struct Pid {
+
+//#[deriving(PartialOrd, PartialEq, Ord, Eq)]
+pub struct Pid {                // moved out from enum because it used in Eterm::{Fun,NewFun}
     node: Atom,
     id: u8,
     serial: u32,
@@ -102,5 +106,33 @@ fn main() {
     for i in range(70, 120) {
         let tag: Option<ErlTermTag> = FromPrimitive::from_int(i);
         println!("{} => {:?}", i, tag);
+    }
+
+    let map = vec!( (Atom("my_map_key".to_string()), Nil) );
+
+    let term: Eterm = NewFun {
+        arity: 3,
+        uniq: 1234,
+        index: 10,
+        module: "my_mod".to_string(),
+        old_index: 1212,
+        old_uniq: 1234,
+        pid: Pid {node: "wasd".to_string(), id: 1, serial: 123, creation: 2},
+        free_vars: vec!(//Float(3.14),
+                        Nil,
+                        Binary(vec!(1, 2, 3, 4)),
+                        Export {
+                            module: "my_mod".to_string(),
+                            function: "my_func".to_string(),
+                            arity: 4},
+                        List(vec!(SmallInteger(1), Integer(1000000), Nil)),
+                        Tuple(vec!(Atom("record".to_string()), Map(map))),
+                        ),
+    };
+    println!("{:?}", term);
+    match term {
+        NewFun {free_vars: vars, ..} =>
+            println!("{:?}", vars.as_slice()),
+        _ => ()
     }
 }
