@@ -51,7 +51,7 @@ enum ErlTermTag {
 pub enum Eterm {
     SmallInteger(u8),           // small_integer
     Integer(int),               // integer
-    // Float(f64),                 // float, new_float
+    Float(f64),                 // float, new_float
     Atom(Atom),                 // atom, small_atom, atom_utf8, small_atom_utf8
     Reference {                 // reference, new_reference
         node: Atom,
@@ -155,6 +155,25 @@ impl<T: io::Reader> Builder<T> {
                             })
                 }
             },
+            Some(REFERENCE_EXT) => {
+                let node = match try!(self.build()) {
+                    Atom(a) =>
+                        a,
+                    _ =>
+                        return Err(io::IoError{
+                            kind: io::OtherIoError,
+                            desc: "Assertion failed: Atom expected",
+                            detail: None
+                        })
+                };
+                let id = try!(self.rdr.read_exact(4));
+                let creation = try!(self.rdr.read_u8());
+                Ok(Reference {
+                    node: node,
+                    id: id,
+                    creation: creation
+                })
+            },
             Some(SMALL_TUPLE_EXT) => {
                 let mut tuple: Tuple = Vec::new();
                 let arity = try!(self.rdr.read_u8());
@@ -174,10 +193,47 @@ impl<T: io::Reader> Builder<T> {
                 }
                 Ok(Map(map))
             },
+            Some(NIL_EXT) =>
+                Ok(Nil),
             Some(BINARY_EXT) => {
                 let len = try!(self.rdr.read_be_u32());
                 Ok(Binary(try!(self.rdr.read_exact(len as uint))))
-            }
+            },
+            Some(NEW_REFERENCE_EXT) => {
+                let len = try!(self.rdr.read_be_u16());
+                let node = match try!(self.build()) {
+                    Atom(a) =>
+                        a,
+                    _ =>
+                        return Err(io::IoError{
+                            kind: io::OtherIoError,
+                            desc: "Assertion failed: Atom expected",
+                            detail: None
+                        })
+                };
+                let creation = try!(self.rdr.read_u8());
+                let id = try!(self.rdr.read_exact(4 * len as uint));
+                Ok(Reference{
+                    node: node,
+                    id: id, // here id should be Vec<u32>, but since it's not interpreted, leave it as is
+                    creation: creation
+                })
+            },
+            Some(SMALL_ATOM_EXT) | Some(SMALL_ATOM_UTF8_EXT) => {
+                let len = try!(self.rdr.read_u8());
+                let data = try!(self.rdr.read_exact(len as uint));
+                // XXX: data is in latin1 in case of ATOM_EXT
+                match String::from_utf8(data) {
+                    Ok(atom) =>
+                        Ok(Atom(atom)),
+                    Err(_) =>
+                        Err(io::IoError{
+                            kind: io::OtherIoError,
+                            desc: "Bad utf-8",
+                            detail: None // format!("{}", data)
+                            })
+                }
+            },
             Some(t) =>
                 Err(io::IoError{
                     kind: io::OtherIoError,
