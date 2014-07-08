@@ -13,7 +13,6 @@ use std::vec::Vec;
 use std::num::FromPrimitive;
 use std::io;
 use num::bigint;
-use collections::bitv::Bitv;
 
 
 #[deriving(FromPrimitive, Show)]
@@ -46,7 +45,6 @@ enum ErlTermTag {
     SMALL_ATOM_UTF8_EXT = 119,
 }
 
-//#[deriving(PartialOrd, PartialEq, Ord, Eq)]
 #[deriving(Show)]
 pub enum Eterm {
     SmallInteger(u8),           // small_integer
@@ -63,9 +61,9 @@ pub enum Eterm {
         creation: u8},
     Pid(Pid),                   // pid
     Tuple(Tuple),               // small_tuple, large_tuple
-    Map(EMap),                  // map
+    Map(Map),                   // map
     Nil,                        // nil
-    String(Vec<u8>),             // string XXX: maybe eliminate this in favour of List?
+    String(Vec<u8>),            // string XXX: maybe eliminate this in favour of List?
     List(List),                 // list
     Binary(Vec<u8>),            // binary
     BigNum(bigint::BigInt),     // small_big, large_big
@@ -89,14 +87,17 @@ pub enum Eterm {
         function: Atom,
         arity: u8,
     },
-    BitBinary(Bitv),            // bit_binary; XXX: maybe choose some other representation?
+    BitBinary {                 // bit_binary; maybe implement .to_bitv() -> Bitv for it?
+        bits: u8,
+        data: Vec<u8>,
+    },
 }
 pub type Atom = String;
 pub type Tuple = Vec<Eterm>;
-pub type EMap = Vec<(Eterm, Eterm)>; // k-v pairs //TreeMap<Eterm, Eterm>;
+pub type Map = Vec<(Eterm, Eterm)>; // k-v pairs
 pub type List = Vec<Eterm>;
 
-//#[deriving(PartialOrd, PartialEq, Ord, Eq)]
+
 #[deriving(Show)]
 pub struct Pid {                // moved out from enum because it used in Eterm::{Fun,NewFun}
     node: Atom,
@@ -255,7 +256,7 @@ impl<T: io::Reader> Builder<T> {
                 Ok(Tuple(tuple))
             }
             Some(MAP_EXT) => {
-                let mut map: EMap = Vec::new();
+                let mut map: Map = Vec::new();
                 let arity = try!(self.rdr.read_be_u32());
                 for _ in range(0, arity) {
                     let key = try!(self.build());
@@ -502,13 +503,14 @@ impl<T: io::Reader> Builder<T> {
                     arity: arity, // arity > u8 possible in practice
                 })
             },
-            // Some(BIT_BINARY_EXT) => {
-            //     TODO
-            //     let len = try!(self.rdr.read_be_u32()) as uint;
-            //     let bits = try!(self.rdr.read_u8()) as uint;
-            //     let mut bitv = Bitv::new(len * 4 + bits); // XXX: uint overflow possible!
-            //     // unfortunately, bitv isn't resizable, so we couldn't use 'from_bytes'
-            // },
+            Some(BIT_BINARY_EXT) => {
+                let len = try!(self.rdr.read_be_u32()) as uint;
+                let bits = try!(self.rdr.read_u8());
+                Ok(BitBinary {
+                    bits: bits,
+                    data: try!(self.rdr.read_exact(len)),
+                })
+            },
             Some(NEW_FLOAT_EXT) =>
                 Ok(Float(try!(self.rdr.read_be_f64()))),
             Some(t) =>
