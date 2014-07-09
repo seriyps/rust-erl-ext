@@ -132,6 +132,25 @@ struct Decoder<T> {
 //         )
 // )
 
+macro_rules! decode_some(
+    ($e:expr, $($t:ident),+ ) => (
+        {
+            match try!($e._decode_tag()) {
+                $(
+                    $t =>
+                        try!($e.decode_concrete_term($t)),
+                    )+
+                    _ =>
+                    return Err(io::IoError {
+                        kind: io::OtherIoError,
+                        desc: "Assertion failed, unexpected tag",
+                        detail: None
+                    })
+            }
+        }
+        )
+)
+
 impl<T: io::Reader> Decoder<T> {
     fn new(rdr: T) -> Decoder<T> {
         Decoder{rdr: rdr}
@@ -145,19 +164,21 @@ impl<T: io::Reader> Decoder<T> {
     fn decode_integer(&mut self) -> DecodeResult {
         Ok(Integer(try!(self.rdr.read_be_int())))
     }
-    fn decode_float(&mut self) -> DecodeResult {
-        // XXX: there should be more elegant way...
-        let float_vec = try!(self.rdr.read_exact(31));
-        let float_str: &str = match std::str::from_utf8(float_vec.as_slice()) {
-            Some(s) => s,
-            None =>
+    fn _read_str(&mut self, len: uint) -> io::IoResult<String> {
+        let utf8 = try!(self.rdr.read_exact(len));
+        match String::from_utf8(utf8) {
+            Ok(s) => Ok(s),
+            Err(_) =>
                 return Err(io::IoError{
                     kind: io::OtherIoError,
                     desc: "Bad utf-8",
                     detail: None
                 })
-        };
-        match from_str::<f32>(float_str) {
+        }
+    }
+    fn decode_float(&mut self) -> DecodeResult {
+        let float_str = try!(self._read_str(31));
+        match from_str::<f32>(float_str.as_slice()) {
             Some(num) => Ok(Float(num as f64)),
             _ =>
                 Err(io::IoError{
@@ -167,31 +188,28 @@ impl<T: io::Reader> Decoder<T> {
                 })
         }
     }
-    fn decode_atom(&mut self) -> DecodeResult {
-        let len = try!(self.rdr.read_be_u16());
-        let data = try!(self.rdr.read_exact(len as uint));
-        // XXX: data is in latin1 in case of ATOM_EXT
-        match String::from_utf8(data) {
-            Ok(atom) =>
-                Ok(Atom(atom)),
-            Err(_) =>
-                Err(io::IoError{
+    fn _decode_any_atom(&mut self) -> DecodeResult {
+        match try!(self._decode_tag()) {
+            ATOM_EXT | ATOM_UTF8_EXT => self.decode_atom(),
+            SMALL_ATOM_EXT | SMALL_ATOM_UTF8_EXT => self.decode_small_atom(),
+            _ =>
+                return Err(io::IoError {
                     kind: io::OtherIoError,
-                    desc: "Bad utf-8",
-                    detail: None // format!("{}", data)
+                    desc: "Assertion failed, unexpected tag",
+                    detail: None
                 })
         }
     }
+    fn decode_atom(&mut self) -> DecodeResult {
+        let len = try!(self.rdr.read_be_u16());
+        let atom_str = try!(self._read_str(len as uint));
+        // XXX: data is in latin1 in case of ATOM_EXT
+        Ok(Atom(atom_str))
+    }
     fn decode_reference(&mut self) -> DecodeResult {
-        let node = match try!(self.decode_term()) {
-            Atom(a) =>
-                a,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Atom expected",
-                    detail: None
-                })
+        let node = match try!(self._decode_any_atom()) {
+            Atom(a) => a,
+            _ => unreachable!()
         };
         let id = try!(self.rdr.read_exact(4));
         let creation = try!(self.rdr.read_u8());
@@ -202,15 +220,9 @@ impl<T: io::Reader> Decoder<T> {
         })
     }
     fn decode_port(&mut self) -> DecodeResult {
-        let node = match try!(self.decode_term()) {
-            Atom(a) =>
-                a,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Atom expected",
-                    detail: None
-                })
+        let node = match try!(self._decode_any_atom()) {
+            Atom(a) => a,
+            _ => unreachable!()
         };
         let id = try!(self.rdr.read_exact(4));
         let creation = try!(self.rdr.read_u8());
@@ -221,15 +233,9 @@ impl<T: io::Reader> Decoder<T> {
         })
     }
     fn decode_pid(&mut self) -> DecodeResult {
-        let node = match try!(self.decode_term()) {
-            Atom(a) =>
-                a,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Atom expected",
-                    detail: None
-                })
+        let node = match try!(self._decode_any_atom()) {
+            Atom(a) => a,
+            _ => unreachable!()
         };
         let id = try!(self.rdr.read_be_u32());
         let serial = try!(self.rdr.read_be_u32()); // maybe [u8, ..4]?
@@ -289,8 +295,7 @@ impl<T: io::Reader> Decoder<T> {
         let len = try!(self.rdr.read_be_u32());
         Ok(Binary(try!(self.rdr.read_exact(len as uint))))
     }
-    fn decode_small_big(&mut self) -> DecodeResult {
-        let n = try!(self.rdr.read_u8());
+    fn _decode_big(&mut self, n: uint) -> DecodeResult {
         let sign_int = try!(self.rdr.read_u8());
         let sign = if sign_int == 0 {
             bigint::Plus
@@ -322,20 +327,19 @@ impl<T: io::Reader> Decoder<T> {
         }
         Ok(BigNum(bigint::BigInt::new(sign, numbers)))
     }
+    fn decode_small_big(&mut self) -> DecodeResult {
+        let n = try!(self.rdr.read_u8());
+        self._decode_big(n as uint)
+    }
     fn decode_large_big(&mut self) -> DecodeResult {
-        Ok(Nil)                 // TODO!!!
+        let n = try!(self.rdr.read_be_u32());
+        self._decode_big(n as uint)
     }
     fn decode_new_reference(&mut self) -> DecodeResult {
         let len = try!(self.rdr.read_be_u16());
-        let node = match try!(self.decode_term()) {
-            Atom(a) =>
-                a,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Atom expected",
-                    detail: None
-                })
+        let node = match try!(self._decode_any_atom()) {
+            Atom(a) => a,
+            _ => unreachable!()
         };
         let creation = try!(self.rdr.read_u8());
         let id = try!(self.rdr.read_exact(4 * len as uint));
@@ -347,59 +351,30 @@ impl<T: io::Reader> Decoder<T> {
     }
     fn decode_small_atom(&mut self) -> DecodeResult {
         let len = try!(self.rdr.read_u8());
-        let data = try!(self.rdr.read_exact(len as uint));
-        // XXX: data is in latin1 in case of ATOM_EXT
-        match String::from_utf8(data) {
-            Ok(atom) =>
-                Ok(Atom(atom)),
-            Err(_) =>
-                Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Bad utf-8",
-                    detail: None // format!("{}", data)
-                })
-        }
+        let atom_str = try!(self._read_str(len as uint));
+        // XXX: data is in latin1 in case of SMALL_ATOM_EXT
+        Ok(Atom(atom_str))
     }
     fn decode_fun(&mut self) -> DecodeResult {
         // TODO: cleanup error handling (generalize)
         let num_free = try!(self.rdr.read_be_u32());
-        let pid = match try!(self.decode_term()) {
+        let pid = match decode_some!(self, PID_EXT) {
             Pid(pid) => pid,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Pid expected",
-                    detail: None
-                })
+            _ => unreachable!()
         };
-        let module = match try!(self.decode_term()) {
+        let module = match try!(self._decode_any_atom()) {
             Atom(atom) => atom,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Atom expected",
-                    detail: None
-                })
+            _ => unreachable!()
         };
-        let index = match try!(self.decode_term()) {
+        let index = match decode_some!(self, SMALL_INTEGER_EXT, INTEGER_EXT) {
             SmallInteger(idx) => idx as u32,
             Integer(idx) => idx as u32,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Integer expected",
-                    detail: None
-                })
+            _ => unreachable!()
         };
-        let uniq = match try!(self.decode_term()) {
+        let uniq = match decode_some!(self, SMALL_INTEGER_EXT, INTEGER_EXT) {
             SmallInteger(uq) => uq as u32,
             Integer(uq) => uq as u32,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Integer expected",
-                    detail: None
-                })
+            _ => unreachable!()
         };
         let mut free_vars = Vec::<Eterm>::with_capacity(num_free as uint);
         for _ in range(0, num_free) {
@@ -419,50 +394,29 @@ impl<T: io::Reader> Decoder<T> {
         let uniq = try!(self.rdr.read_exact(16));
         let index = try!(self.rdr.read_be_u32());
         let num_free = try!(self.rdr.read_be_u32());
-        // XXX: following code is copy-pasted!
-        let module = match try!(self.decode_term()) {
+
+        let module = match try!(self._decode_any_atom()) {
             Atom(atom) => atom,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Atom expected",
-                    detail: None
-                })
+            _ => unreachable!()
         };
-        let old_index = match try!(self.decode_term()) {
+        let old_index = match decode_some!(self, SMALL_INTEGER_EXT, INTEGER_EXT) {
             SmallInteger(idx) => idx as u32,
             Integer(idx) => idx as u32,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Integer expected",
-                    detail: None
-                })
+            _ => unreachable!()
         };
-        let old_uniq = match try!(self.decode_term()) {
+        let old_uniq = match decode_some!(self, SMALL_INTEGER_EXT, INTEGER_EXT) {
             SmallInteger(uq) => uq as u32,
             Integer(uq) => uq as u32,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Integer expected",
-                    detail: None
-                })
+            _ => unreachable!()
         };
-        let pid = match try!(self.decode_term()) {
+        let pid = match decode_some!(self, PID_EXT) {
             Pid(pid) => pid,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Pid expected",
-                    detail: None
-                })
+            _ => unreachable!()
         };
         let mut free_vars = Vec::<Eterm>::with_capacity(num_free as uint);
         for _ in range(0, num_free) {
             free_vars.push(try!(self.decode_term()));
         }
-        // END copy-pasted
         Ok(NewFun {
             arity: arity,
             uniq: uniq,
@@ -475,32 +429,17 @@ impl<T: io::Reader> Decoder<T> {
         })
     }
     fn decode_export(&mut self) -> DecodeResult {
-        let module = match try!(self.decode_term()) {
+        let module = match try!(self._decode_any_atom()) {
             Atom(atom) => atom,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Atom expected",
-                    detail: None
-                })
+            _ => unreachable!()
         };
-        let function = match try!(self.decode_term()) {
+        let function = match try!(self._decode_any_atom()) {
             Atom(atom) => atom,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: Atom expected",
-                    detail: None
-                })
+            _ => unreachable!()
         };
-        let arity = match try!(self.decode_term()) {
+        let arity = match decode_some!(self, SMALL_INTEGER_EXT) {
             SmallInteger(uq) => uq,
-            _ =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed: SmallInteger expected",
-                    detail: None
-                })
+            _ => unreachable!()
         };
         Ok(Export {
             module: module,
@@ -519,39 +458,50 @@ impl<T: io::Reader> Decoder<T> {
     fn decode_new_float(&mut self) -> DecodeResult {
         Ok(Float(try!(self.rdr.read_be_f64())))
     }
-    fn decode_term(&mut self) -> DecodeResult {
+
+
+    fn _decode_tag(&mut self) -> io::IoResult<ErlTermTag> {
         let int_tag = try!(self.rdr.read_u8());
         let tag: Option<ErlTermTag> = FromPrimitive::from_u8(int_tag);
         match tag {
-            Some(SMALL_INTEGER_EXT) => self.decode_small_integer(),
-            Some(INTEGER_EXT) => self.decode_integer(),
-            Some(FLOAT_EXT) => self.decode_float(),
-            Some(ATOM_EXT) | Some(ATOM_UTF8_EXT) => self.decode_atom(),
-            Some(REFERENCE_EXT) => self.decode_reference(),
-            Some(PORT_EXT) => self.decode_port(),
-            Some(PID_EXT) => self.decode_pid(),
-            Some(SMALL_TUPLE_EXT) => self.decode_small_tuple(),
-            Some(LARGE_TUPLE_EXT) => self.decode_large_tuple(),
-            Some(MAP_EXT) => self.decode_map(),
-            Some(NIL_EXT) => self.decode_nil(),
-            Some(STRING_EXT) => self.decode_string(),
-            Some(LIST_EXT) => self.decode_list(),
-            Some(BINARY_EXT) => self.decode_binary(),
-            Some(SMALL_BIG_EXT) => self.decode_small_big(),
-            Some(LARGE_BIG_EXT) => self.decode_large_big(),
-            Some(NEW_REFERENCE_EXT) => self.decode_new_reference(),
-            Some(SMALL_ATOM_EXT) | Some(SMALL_ATOM_UTF8_EXT) => self.decode_small_atom(),
-            Some(FUN_EXT) => self.decode_fun(),
-            Some(NEW_FUN_EXT) => self.decode_new_fun(),
-            Some(EXPORT_EXT) => self.decode_export(),
-            Some(BIT_BINARY_EXT) => self.decode_bit_binary(),
-            Some(NEW_FLOAT_EXT) => self.decode_new_float(),
+            Some(t) => Ok(t),
             None =>
                 Err(io::IoError{
                     kind: io::OtherIoError,
-                    desc: "Invalid data type",
+                    desc: "Invalid term type",
                     detail: Some(format!("Tag: #{}", int_tag))
                 })
+        }
+    }
+    fn decode_term(&mut self) -> DecodeResult {
+        let tag = try!(self._decode_tag());
+        self.decode_concrete_term(tag)
+    }
+    fn decode_concrete_term(&mut self, tag: ErlTermTag) -> DecodeResult {
+        match tag {
+            SMALL_INTEGER_EXT => self.decode_small_integer(),
+            INTEGER_EXT => self.decode_integer(),
+            FLOAT_EXT => self.decode_float(),
+            ATOM_EXT | ATOM_UTF8_EXT => self.decode_atom(),
+            REFERENCE_EXT => self.decode_reference(),
+            PORT_EXT => self.decode_port(),
+            PID_EXT => self.decode_pid(),
+            SMALL_TUPLE_EXT => self.decode_small_tuple(),
+            LARGE_TUPLE_EXT => self.decode_large_tuple(),
+            MAP_EXT => self.decode_map(),
+            NIL_EXT => self.decode_nil(),
+            STRING_EXT => self.decode_string(),
+            LIST_EXT => self.decode_list(),
+            BINARY_EXT => self.decode_binary(),
+            SMALL_BIG_EXT => self.decode_small_big(),
+            LARGE_BIG_EXT => self.decode_large_big(),
+            NEW_REFERENCE_EXT => self.decode_new_reference(),
+            SMALL_ATOM_EXT | SMALL_ATOM_UTF8_EXT => self.decode_small_atom(),
+            FUN_EXT => self.decode_fun(),
+            NEW_FUN_EXT => self.decode_new_fun(),
+            EXPORT_EXT => self.decode_export(),
+            BIT_BINARY_EXT => self.decode_bit_binary(),
+            NEW_FLOAT_EXT => self.decode_new_float(),
         }
     }
 }
