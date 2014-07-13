@@ -12,7 +12,6 @@ use std::string::String;
 use std::vec::Vec;
 use std::num::FromPrimitive;
 use std::io;
-use std::str;
 use num::bigint;
 // use serialize::{Encodable, Decodable};
 
@@ -50,7 +49,7 @@ enum ErlTermTag {
 #[deriving(Show)]
 pub enum Eterm {
     SmallInteger(u8),           // small_integer
-    Integer(int),               // integer
+    Integer(i32),               // integer
     Float(f64),                 // float, new_float
     Atom(Atom),                 // atom, small_atom, atom_utf8, small_atom_utf8
     Reference {                 // reference, new_reference
@@ -59,7 +58,7 @@ pub enum Eterm {
         creation: u8},
     Port {                      // poort
         node: Atom,
-        id: u8,
+        id: u32,
         creation: u8},
     Pid(Pid),                   // pid
     Tuple(Tuple),               // small_tuple, large_tuple
@@ -155,7 +154,7 @@ macro_rules! decode_some(
 
 impl<'a> Decoder<'a> {
     fn new(rdr: &'a mut io::Reader) -> Decoder<'a> {
-        Decoder{rdr: rdr, stack: Vec::new()}
+        Decoder{rdr: rdr}
     }
     fn read_prelude(&mut self) -> io::IoResult<bool> {
         Ok(131 == try!(self.rdr.read_u8()))
@@ -164,7 +163,7 @@ impl<'a> Decoder<'a> {
         Ok(SmallInteger(try!(self.rdr.read_u8())))
     }
     fn decode_integer(&mut self) -> DecodeResult {
-        Ok(Integer(try!(self.rdr.read_be_int())))
+        Ok(Integer(try!(self.rdr.read_be_i32())))
     }
     fn _read_str(&mut self, len: uint) -> io::IoResult<String> {
         let utf8 = try!(self.rdr.read_exact(len));
@@ -226,9 +225,9 @@ impl<'a> Decoder<'a> {
             Atom(a) => a,
             _ => unreachable!()
         };
-        let id = try!(self.rdr.read_exact(4));
+        let id = try!(self.rdr.read_be_u32());
         let creation = try!(self.rdr.read_u8());
-        Ok(Reference {
+        Ok(Port {
             node: node,
             id: id,
             creation: creation
@@ -251,7 +250,7 @@ impl<'a> Decoder<'a> {
     }
 
     fn _decode_small_tuple_arity(&mut self) -> io::IoResult<u8> {
-        self.rdr.read_u8();
+        self.rdr.read_u8()
     }
     fn decode_small_tuple(&mut self) -> DecodeResult {
         let arity = try!(self._decode_small_tuple_arity());
@@ -264,7 +263,7 @@ impl<'a> Decoder<'a> {
     }
 
     fn _decode_large_tuple_arity(&mut self) -> io::IoResult<u32> {
-        self.rdr.read_be_u32();
+        self.rdr.read_be_u32()
     }
     fn decode_large_tuple(&mut self) -> DecodeResult {
         let arity = try!(self._decode_large_tuple_arity());
@@ -277,7 +276,7 @@ impl<'a> Decoder<'a> {
     }
 
     fn _decode_map_arity(&mut self) -> io::IoResult<u32> {
-        self.rdr.read_be_u32();
+        self.rdr.read_be_u32()
     }
     fn decode_map(&mut self) -> DecodeResult {
         let arity: u32 = try!(self._decode_map_arity());
@@ -298,7 +297,7 @@ impl<'a> Decoder<'a> {
     }
 
     fn _decode_list_len(&mut self) -> io::IoResult<u32> {
-        self.rdr.read_be_u32();
+        self.rdr.read_be_u32()
     }
     fn decode_list(&mut self) -> DecodeResult {
         // XXX: should we push Nil as last element or may ignore it?
