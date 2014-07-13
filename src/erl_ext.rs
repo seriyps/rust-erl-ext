@@ -2,20 +2,22 @@
 
 #![feature(struct_variant)]     // this is for enum Eterm
 #![allow(non_camel_case_types)] // this is for enum ErlTermTag
-#![feature(macro_rules)]        // for try_io!
+#![feature(macro_rules)]        // for try_io! and decode_some!
 
 extern crate num;
 extern crate collections;
-extern crate debug;
+extern crate serialize;
 
 use std::string::String;
 use std::vec::Vec;
 use std::num::FromPrimitive;
 use std::io;
+use std::str;
 use num::bigint;
+// use serialize::{Encodable, Decodable};
 
 
-#[deriving(FromPrimitive, Show)]
+#[deriving(FromPrimitive, Show, PartialEq)]
 enum ErlTermTag {
     // ATOM_CACHE_REF = 82,
     SMALL_INTEGER_EXT = 97,
@@ -63,7 +65,7 @@ pub enum Eterm {
     Tuple(Tuple),               // small_tuple, large_tuple
     Map(Map),                   // map
     Nil,                        // nil
-    String(Vec<u8>),            // string XXX: maybe eliminate this in favour of List?
+    String(Vec<u8>),            // string; it's not String, because not guaranteed to be valid UTF-8
     List(List),                 // list
     Binary(Vec<u8>),            // binary
     BigNum(bigint::BigInt),     // small_big, large_big
@@ -102,7 +104,7 @@ pub type List = Vec<Eterm>;
 pub struct Pid {                // moved out from enum because it used in Eterm::{Fun,NewFun}
     node: Atom,
     id: u32,
-    serial: u32,
+    serial: u32,                // maybe [u8, ..4]?
     creation: u8,
 }
 
@@ -119,8 +121,8 @@ pub struct Pid {                // moved out from enum because it used in Eterm:
 
 type DecodeResult = io::IoResult<Eterm>;//, DecodeError>;
 
-struct Decoder<T> {
-    rdr: T,
+struct Decoder<'a> {
+    rdr: &'a mut io::Reader,
 }
 
 // macro_rules! try_io(
@@ -140,20 +142,20 @@ macro_rules! decode_some(
                     $t =>
                         try!($e.decode_concrete_term($t)),
                     )+
-                    _ =>
+                    bad =>
                     return Err(io::IoError {
                         kind: io::OtherIoError,
                         desc: "Assertion failed, unexpected tag",
-                        detail: None
+                        detail: Some(format!("Got {}", bad)),
                     })
             }
         }
         )
 )
 
-impl<T: io::Reader> Decoder<T> {
-    fn new(rdr: T) -> Decoder<T> {
-        Decoder{rdr: rdr}
+impl<'a> Decoder<'a> {
+    fn new(rdr: &'a mut io::Reader) -> Decoder<'a> {
+        Decoder{rdr: rdr, stack: Vec::new()}
     }
     fn read_prelude(&mut self) -> io::IoResult<bool> {
         Ok(131 == try!(self.rdr.read_u8()))
@@ -238,7 +240,7 @@ impl<T: io::Reader> Decoder<T> {
             _ => unreachable!()
         };
         let id = try!(self.rdr.read_be_u32());
-        let serial = try!(self.rdr.read_be_u32()); // maybe [u8, ..4]?
+        let serial = try!(self.rdr.read_be_u32());
         let creation = try!(self.rdr.read_u8());
         Ok(Pid(Pid {
             node: node,
@@ -247,17 +249,25 @@ impl<T: io::Reader> Decoder<T> {
             creation: creation
         }))
     }
+
+    fn _decode_small_tuple_arity(&mut self) -> io::IoResult<u8> {
+        self.rdr.read_u8();
+    }
     fn decode_small_tuple(&mut self) -> DecodeResult {
-        let arity = try!(self.rdr.read_u8());
+        let arity = try!(self._decode_small_tuple_arity());
         let mut tuple: Tuple = Vec::with_capacity(arity as uint);
         for _ in range(0, arity) {
             let term = try!(self.decode_term());
             tuple.push(term)
         }
         Ok(Tuple(tuple))
+    }
+
+    fn _decode_large_tuple_arity(&mut self) -> io::IoResult<u32> {
+        self.rdr.read_be_u32();
     }
     fn decode_large_tuple(&mut self) -> DecodeResult {
-        let arity = try!(self.rdr.read_be_u32());
+        let arity = try!(self._decode_large_tuple_arity());
         let mut tuple: Tuple = Vec::with_capacity(arity as uint);
         for _ in range(0, arity) {
             let term = try!(self.decode_term());
@@ -265,9 +275,13 @@ impl<T: io::Reader> Decoder<T> {
         }
         Ok(Tuple(tuple))
     }
+
+    fn _decode_map_arity(&mut self) -> io::IoResult<u32> {
+        self.rdr.read_be_u32();
+    }
     fn decode_map(&mut self) -> DecodeResult {
-        let mut map: Map = Vec::new();
-        let arity = try!(self.rdr.read_be_u32());
+        let arity: u32 = try!(self._decode_map_arity());
+        let mut map: Map = Vec::with_capacity(arity as uint);
         for _ in range(0, arity) {
             let key = try!(self.decode_term());
             let val = try!(self.decode_term());
@@ -282,8 +296,13 @@ impl<T: io::Reader> Decoder<T> {
         let len = try!(self.rdr.read_be_u16());
         Ok(String(try!(self.rdr.read_exact(len as uint))))
     }
+
+    fn _decode_list_len(&mut self) -> io::IoResult<u32> {
+        self.rdr.read_be_u32();
+    }
     fn decode_list(&mut self) -> DecodeResult {
-        let len = try!(self.rdr.read_be_u32()) + 1;
+        // XXX: should we push Nil as last element or may ignore it?
+        let len = try!(self._decode_list_len()) + 1;
         let mut list = Vec::with_capacity(len as uint);
         for _ in range(0, len) {
             let term = try!(self.decode_term());
