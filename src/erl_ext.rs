@@ -524,12 +524,193 @@ impl<'a> Decoder<'a> {
     }
 }
 
+pub type EncodeResult = io::IoResult<()>; // TODO: maybe return num bytes written?
+
+struct Encoder<'a> {
+    wrtr: &'a mut io::Writer,
+    use_utf8_atoms: bool,
+    use_small_atoms: bool,
+    //use_new_float: bool, (>=R11B)
+}
+
+
+impl<'a> Encoder<'a> {
+    // TODO: asserts for overflows
+
+    fn new<'a>(writer: &'a mut io::Writer, utf8_atoms: bool, small_atoms: bool) -> Encoder<'a> {
+        Encoder{wrtr: writer,
+                use_utf8_atoms: utf8_atoms,
+                use_small_atoms: small_atoms}
+    }
+
+    fn write_prelude(&mut self) -> EncodeResult {
+        self.wrtr.write_u8(131)
+    }
+
+    fn encode_small_integer(&mut self, num: u8) -> EncodeResult {
+        self.wrtr.write_u8(num)
+    }
+    fn encode_integer(&mut self, num: i32) -> EncodeResult {
+        self.wrtr.write_be_i32(num)
+    }
+    fn encode_new_float(&mut self, num: f64) -> EncodeResult {
+        self.wrtr.write_be_f64(num)
+    }
+
+    fn _encode_str(&mut self, s: String) -> EncodeResult {
+        self.wrtr.write_str(s.as_slice())
+    }
+    fn encode_atom(&mut self, atom: Atom) -> EncodeResult {
+        try!(self.wrtr.write_be_u16(atom.len() as u16));
+        self._encode_str(atom)
+    }
+    fn encode_small_atom(&mut self, atom: Atom) -> EncodeResult {
+        try!(self.wrtr.write_u8(atom.len() as u8));
+        self._encode_str(atom)
+    }
+    fn encode_new_reference(&mut self, node: Atom, id: Vec<u8>, creation: u8) -> EncodeResult {
+        let len = id.len() / 4; // todo: ensure proper rounding, maybe (id.len() / 4) + if (id.len() % 4) == 0 {0} else {1}
+        try!(self.wrtr.write_be_u16(len as u16));
+        try!(self.encode_term(Atom(node)));
+        try!(self.wrtr.write_u8(creation));
+        self.wrtr.write(id.as_slice())
+    }
+    fn encode_port(&mut self, node: Atom, id: u32, creation: u8) -> EncodeResult {
+        try!(self.encode_term(Atom(node)));
+        try!(self.wrtr.write_be_u32(id));
+        self.wrtr.write_u8(creation)
+    }
+    fn encode_pid(&mut self, node: Atom, id: u32, serial: u32, creation: u8) -> EncodeResult {
+        try!(self.encode_term(Atom(node)));
+        try!(self.wrtr.write_be_u32(id));
+        try!(self.wrtr.write_be_u32(serial));
+        self.wrtr.write_u8(creation)
+    }
+
+    fn encode_small_tuple(&mut self, tuple: Vec<Eterm>) -> EncodeResult {
+        try!(self.wrtr.write_u8(tuple.len() as u8));
+        for term in tuple.move_iter() {
+            try!(self.encode_term(term));
+        }
+        Ok(())
+    }
+    fn encode_large_tuple(&mut self, tuple: Vec<Eterm>) -> EncodeResult {
+        try!(self.wrtr.write_be_u32(tuple.len() as u32));
+        for term in tuple.move_iter() {
+            try!(self.encode_term(term));
+        }
+        Ok(())
+    }
+    fn encode_map(&mut self, map: Map) -> EncodeResult {
+        try!(self.wrtr.write_be_u32(map.len() as u32));
+        for (key, val) in map.move_iter() {
+            try!(self.encode_term(key));
+            try!(self.encode_term(val));
+        }
+        Ok(())
+    }
+    fn encode_string(&mut self, s: Vec<u8>) -> EncodeResult {
+        try!(self.wrtr.write_be_u16(s.len() as u16));
+        self.wrtr.write(s.as_slice())
+    }
+    fn encode_list(&mut self, list: Vec<Eterm>) -> EncodeResult {
+        try!(self.wrtr.write_be_u32((list.len() - 1) as u32));
+        for term in list.move_iter() {
+            try!(self.encode_term(term));
+        }
+        Ok(())
+    }
+
+    fn encode_binary(&mut self, bin: Vec<u8>) -> EncodeResult {
+        try!(self.wrtr.write_be_u32(bin.len() as u32));
+        self.wrtr.write(bin.as_slice())
+    }
+
+    fn _encode_tag(&mut self, tag: ErlTermTag) -> EncodeResult {
+        let int_tag = tag as u8;
+        self.wrtr.write_u8(int_tag)
+    }
+    fn encode_term(&mut self, term: Eterm) -> EncodeResult {
+        // XXX: maybe use &Eterm, not just Eterm?
+        match term {
+            SmallInteger(num) => {
+                try!(self._encode_tag(SMALL_INTEGER_EXT));
+                self.encode_small_integer(num)
+            },
+            Integer(num) => {
+                try!(self._encode_tag(INTEGER_EXT));
+                self.encode_integer(num)
+            },
+            Float(num) => {
+                try!(self._encode_tag(NEW_FLOAT_EXT));
+                self.encode_new_float(num)
+            },
+            Atom(atom) => {
+                let use_utf8 = self.use_utf8_atoms;
+                let use_small = self.use_small_atoms;
+                if (atom.len() <= 255) && use_small {
+                    try!(self._encode_tag(if use_utf8 {SMALL_ATOM_UTF8_EXT} else {SMALL_ATOM_EXT}));
+                    self.encode_small_atom(atom)
+                } else {
+                    try!(self._encode_tag(if use_utf8 {ATOM_UTF8_EXT} else {ATOM_EXT}));
+                    self.encode_atom(atom)
+                }
+            },
+            Reference{node: node, id: id, creation: creation} => {
+                try!(self._encode_tag(NEW_REFERENCE_EXT));
+                self.encode_new_reference(node, id, creation)
+            },
+            Port{node: node, id: id, creation: creation} => {
+                try!(self._encode_tag(PORT_EXT));
+                self.encode_port(node, id, creation)
+            },
+            Pid(Pid{node: node, id: id, serial: serial, creation: creation}) => {
+                try!(self._encode_tag(PID_EXT));
+                self.encode_pid(node, id, serial, creation)
+            },
+            Tuple(tuple) => {
+                if tuple.len() <= 255 {
+                    try!(self._encode_tag(SMALL_TUPLE_EXT));
+                    self.encode_small_tuple(tuple)
+                } else {
+                    try!(self._encode_tag(LARGE_TUPLE_EXT));
+                    self.encode_large_tuple(tuple)
+                }
+            },
+            Map(map) => {
+                try!(self._encode_tag(MAP_EXT));
+                self.encode_map(map)
+            },
+            Nil => 
+                self._encode_tag(NIL_EXT),
+            String(s) => {
+                try!(self._encode_tag(STRING_EXT));
+                self.encode_string(s)
+            },
+            List(list) => {
+                try!(self._encode_tag(LIST_EXT));
+                self.encode_list(list)
+            },
+            Binary(bin) => {
+                try!(self._encode_tag(BINARY_EXT));
+                self.encode_binary(bin)
+            },
+            bad =>
+                Err(io::IoError{
+                    kind: io::OtherIoError,
+                    desc: "Not implemented",
+                    detail: Some(format!("Got {}", bad)),
+                })
+        }
+    }
+}
+
 fn main() {
-    use std::io::{File,BufferedReader};
+    use std::io::{File,BufferedReader,MemWriter};
 
     for i in range(70, 120) {
         let tag: Option<ErlTermTag> = FromPrimitive::from_int(i);
-        println!("{} => {:?}", i, tag);
+        println!("{} => {}", i, tag);
     }
     println!("==============================");
     let map = vec!( (Atom("my_map_key".to_string()), Nil) );
@@ -555,8 +736,8 @@ fn main() {
     };
     println!("{}", term);
     println!("==============================");
-    let f = BufferedReader::new(File::open(&Path::new("test/test_terms.bin")));
-    let mut builder = Decoder::new(f);
+    let mut f = BufferedReader::new(File::open(&Path::new("test/test_terms.bin")));
+    let mut builder = Decoder::new(&mut f);
     match builder.read_prelude() {
         Ok(true) =>
             println!("Valid eterm"),
@@ -567,5 +748,18 @@ fn main() {
             return
         }
     }
-    println!("{}", builder.decode_term());
+    let term = builder.decode_term();
+    println!("{}", term);
+    println!("==============================");
+
+    let orig_bin = File::open(&Path::new("test/test_terms.bin")).read_to_end().unwrap();
+    let mut wrtr = MemWriter::new();
+    {
+        let mut encoder = Encoder::new(&mut wrtr, false, false);
+        encoder.write_prelude().unwrap();
+        encoder.encode_term(term.unwrap()).unwrap();
+    }
+    println!(" enc: {}", wrtr.get_ref());
+    println!("orig: {}", orig_bin.as_slice());
+    assert!(wrtr.get_ref() == orig_bin.as_slice())
 }
