@@ -525,12 +525,292 @@ impl<'a> Decoder<'a> {
     }
 }
 
+pub type DecodeErr = io::IoError;
+pub type DecodeRes<T> = Result<T, DecodeErr>;
+
+fn _invalid_input(err: &'static str) -> DecodeErr {
+    io::IoError{kind: io::InvalidInput, desc: err, detail: None}
+}
+
+impl<'a> serialize::Decoder<DecodeErr> for Decoder<'a> {
+    fn read_nil(&mut self) -> DecodeRes<()> {
+        match decode_some!(self, NIL_EXT) {
+            Nil => Ok(()),
+            _ => unreachable!()
+        }
+    }
+    fn read_uint(&mut self) -> DecodeRes<uint> {
+        match decode_some!(self, INTEGER_EXT, SMALL_INTEGER_EXT) {
+            Integer(num) if num >= 0 => Ok(num as uint),
+            SmallInteger(num) if num >= 0 => Ok(num as uint),
+            _ => Err(_invalid_input("Can't convert signed integer to unsigned"))
+        }
+    }
+    fn read_u64(&mut self) -> DecodeRes<u64> {
+        Ok(try!(self.read_uint()) as u64)//.to_u64()
+    }
+    fn read_u32(&mut self) -> DecodeRes<u32> {
+        Ok(try!(self.read_uint()) as u32)//.to_u32()
+    }
+    fn read_u16(&mut self) -> DecodeRes<u16> {
+        match try!(self.read_uint()).to_u16() {
+            Some(num) => Ok(num),
+            None => Err(_invalid_input("Value doesn't fit in u16"))
+        }
+    }
+    fn read_u8(&mut self) -> DecodeRes<u8> {
+        match decode_some!(self, SMALL_INTEGER_EXT) {
+            SmallInteger(num) => Ok(num as u8),
+            _ => unreachable!()
+        }
+    }
+    fn read_int(&mut self) -> DecodeRes<int> {
+        match decode_some!(self, INTEGER_EXT, SMALL_INTEGER_EXT) {
+            Integer(num) if num >= 0 => Ok(num as int),
+            SmallInteger(num) if num >= 0 => Ok(num as int),
+            _ => unreachable!()
+        }
+    }
+    fn read_i64(&mut self) -> DecodeRes<i64> {
+        Ok(try!(self.read_int()) as i64)//.to_i64()
+    }
+    fn read_i32(&mut self) -> DecodeRes<i32> {
+        Ok(try!(self.read_int()) as i32)//.to_i32()
+    }
+    fn read_i16(&mut self) -> DecodeRes<i16> {
+        match try!(self.read_int()).to_i16() {
+            Some(num) => Ok(num),
+            None => Err(_invalid_input("Value doesn't fit in u16"))
+        }
+    }
+    fn read_i8(&mut self) -> DecodeRes<i8> {
+        match decode_some!(self, SMALL_INTEGER_EXT) {
+            SmallInteger(num) => Ok(num as i8),
+            _ => unreachable!()
+        }
+    }
+    fn read_bool(&mut self) -> DecodeRes<bool> {
+        let function = match try!(self._decode_any_atom()) {
+            Atom(atom) =>
+                match atom.as_slice() {
+                    "true" => Ok(true),
+                    "false" => Ok(false),
+                    _ => Err(_invalid_input("Expected atom 'true' or 'false'"))
+                },
+            _ => unreachable!()
+        };
+    }
+    fn read_f64(&mut self) -> DecodeRes<f64> {
+        match decode_some!(self, FLOAT_EXT, NEW_FLOAT_EXT) {
+            Float(num) => Ok(num),
+            _ => unreachable!()
+        }
+    }
+    fn read_f32(&mut self) -> DecodeRes<f32> {
+        match try!(self.read_f64()).to_f32() {
+            Some(num) => Ok(num),
+            None => Err(_invalid_input("Value doesn't fit in f32"))
+        }
+    }
+    fn read_char(&mut self) -> DecodeRes<char> {
+        Ok(try!(self.read_u8()) as char)
+    }
+    fn read_str(&mut self) -> DecodeRes<String> {
+        // TODO: should accept also list of unicode points and binaries
+        let tag = try!(self._decode_tag());
+        if tag != STRING_EXT {
+            return Err(_invalid_input("String expected"))
+        }
+        match try!(self.decode_string()) {
+            String(bytes) => {
+                match String::from_utf8(bytes) {
+                    Ok(s) => Ok(s),
+                    Err(_) =>
+                        return Err(io::IoError{
+                            kind: io::OtherIoError,
+                            desc: "Bad utf-8",
+                            detail: None
+                        })
+                }
+
+            },
+            _ => Err(_invalid_input("String expected"))
+        }
+    }
+    // Enums may be encoded like:
+    // enum Animal{Bunny, Kangaroo(age, name)};
+    // Bunny -> {rs_enum, <<"Animal">>, <<"Bunny">>}
+    // Kangaroo(34, "William") -> {rs_enum, <<"Animal">>, <<"Kangaroo">>, [34, "William"]}
+    fn read_enum<T>(&mut self, name: &str, f: |&mut Decoder| -> DecodeRes<T>) -> DecodeRes<T> {
+        let tag = try!(self._decode_tag());
+        if tag != SMALL_TUPLE_EXT {
+            return Err(_invalid_input("Tuple expected"))
+        }
+        let arity = try!(self._decode_small_tuple_arity());
+        if (arity != 3) && (arity != 4) {
+            return Err(_invalid_input("Tuple of arity 3 or 4 expected"))
+        }
+        // ensure tuple's 1st element is atom 'rs_enum'
+        match try!(self.decode_term()) {
+            Atom(atom_name) if atom_name.as_slice() == "rs_enum" => (),
+            _ => return Err(_invalid_input("enum should start with atom 'rs_enum'"))
+        }
+        // ensure tuple's 2nd element is binary string, which == 'name'
+        match try!(self.decode_term()) {
+            Binary(bytes) =>
+                match String::from_utf8(bytes) {
+                    Ok(s) if s.as_slice() == name =>
+                        (), // success
+                    _ =>
+                        return Err(_invalid_input("enum name should be valid utf8 binary"))
+                },
+            _ =>
+                return Err(_invalid_input("enum variant should be binary"))
+        }
+        self.stack.push(DecodeEnum{has_args: arity == 4});
+        let res = f(self);
+        self.stack.pop();
+        res
+    }
+    fn read_enum_variant<T>(&mut self, names: &[&str], f: |&mut Decoder, uint| -> DecodeRes<T>) -> DecodeRes<T> {
+        let name = match try!(self.decode_term()) {
+            Binary(bytes) =>
+                match String::from_utf8(bytes) {
+                    Ok(s) => s,
+                    _ =>
+                        return Err(_invalid_input("enum variant name should be valid utf8 binary"))
+                },
+            _ =>
+                return Err(_invalid_input("enum variant name should be binary"))
+        };
+        let idx = match (names
+                         .iter()
+                         .position(|n| str::eq_slice(*n, name.as_slice()))) {
+            Some(idx) => idx,
+            None => return Err(_invalid_input("unknown enum variant"))
+        };
+        // if enum has arguments, read list's header
+        match self.stack.last() {
+            Some(DecodeEnum{has_args: true}) => {
+                let tag = try!(self._decode_tag());
+                if tag != LIST_EXT {
+                    return Err(_invalid_input("Tuple expected"))
+                }
+                assert!(try!(self._decode_list_len()) > 0);
+            },
+            _ => ()
+        }
+        f(self, idx)
+    }
+    fn read_enum_variant_arg<T>(&mut self, a_idx: uint, f: |&mut Decoder| -> DecodeRes<T>) -> DecodeRes<T> {
+        // should read a_idx's element from list on stack
+        f(self)
+    }
+    fn read_enum_struct_variant<T>(&mut self, names: &[&str], f: |&mut Decoder, uint| -> DecodeRes<T>) -> DecodeRes<T> {
+        self.read_enum_variant(names, f)
+    }
+    fn read_enum_struct_variant_field<T>(&mut self, f_name: &str, f_idx: uint, f: |&mut Decoder| -> DecodeRes<T>) -> DecodeRes<T> {
+        self.read_enum_variant_arg(f_idx, f)
+    }
+
+    // struct may be encoded like:
+    // User{name: "Sergey", burn: 1986} -> {rs_struct, <<"User">>, #{<<"name">> => "Sergey", "burn" => 1986}}
+    // but this requires some parser state to control field's order
+    fn read_struct<T>(&mut self, s_name: &str, len: uint, f: |&mut Decoder| -> DecodeRes<T>) -> DecodeRes<T> {
+        f(self)
+    }
+    fn read_struct_field<T>(&mut self, f_name: &str, f_idx: uint, f: |&mut Decoder| -> DecodeRes<T>) -> DecodeRes<T> {
+        f(self)
+    }
+
+    // Tuples encoded as tuples:
+    // ("a", 123) -> {"a", 123}
+    fn read_tuple<T>(&mut self, f: |&mut Decoder, uint| -> DecodeRes<T>) -> DecodeRes<T> {
+        let tag = try!(self._decode_tag());
+        let arity = match tag {
+            SMALL_TUPLE_EXT =>
+                try!(self._decode_small_tuple_arity()) as uint,
+            LARGE_TUPLE_EXT =>
+                try!(self._decode_large_tuple_arity()) as uint,
+            _ =>
+                return Err(_invalid_input("Tuple expected"))
+        };
+        f(self, arity)
+    }
+    fn read_tuple_arg<T>(&mut self, a_idx: uint, f: |&mut Decoder| -> DecodeRes<T>) -> DecodeRes<T> {
+        f(self)
+    }
+    fn read_tuple_struct<T>(&mut self, s_name: &str, f: |&mut Decoder, uint| -> DecodeRes<T>) -> DecodeRes<T> {
+        Ok(Nil)
+    }
+    fn read_tuple_struct_arg<T>(&mut self, a_idx: uint, f: |&mut Decoder| -> DecodeRes<T>) -> DecodeRes<T> {
+        Ok(Nil)
+    }
+
+    // None -> {rs_enum, <<"Option">>, <<"None">>}
+    // Some(x) -> {rs_enum, <<"Option">>, <<"None">>, [x]}
+    fn read_option<T>(&mut self, f: |&mut Decoder, bool| -> DecodeRes<T>) -> DecodeRes<T> {
+        self.read_enum("Option", |d| {
+            let variants = ["None", "Some"];
+            d.read_enum_variant(variants, |d, i| {
+                match i {
+                    0 => f(d, false),
+                    1 => f(d, true),
+                    _ => Err(_invalid_input("Invalid 'Option' variant"))
+                }
+            })
+        })
+        // let tag = try!(self._decode_tag());
+        // if tag != SMALL_TUPLE_EXT {
+        //     return Err(_invalid_input("Tuple expected"))
+        // }
+        // match try!(self.decode_small_tuple()) {
+        //     Tuple(vec) if vec.len() == 3 => {
+        //         let rs_option = vec.get(0).unwrap().as_slice();
+        //         let val = vec.get(1).unwrap();
+        //         if (rs_option == "rs_option") && (val.as_slice() == "undefined") {
+        //             Ok(None)
+        //         } else if rs_option == "rs_option" {
+        //             Ok(Some(val)) // looks like we should apply Decodable::decode to val?
+        //         } else {
+        //             Err(_invalid_input(
+        //                 "Option should be encoded as {rs_option, undefined | any()}"))
+        //         }
+        //     },
+        //     _ => {
+        //         Err(_invalid_input(
+        //             "Option should be encoded as {rs_option, undefined | any()}"))
+        //     }
+        // }
+    }
+
+    fn read_seq<T>(&mut self, f: |&mut Decoder, uint| -> DecodeRes<T>) -> DecodeRes<T> {
+        let len = try!(self._decode_list_len());
+        f(self, len)
+            // maybe do smth like `if list.last() == Nil -> list.pop()` to ignore trailing Nil
+    }
+    fn read_seq_elt<T>(&mut self, idx: uint, f: |&mut Decoder| -> DecodeRes<T>) -> DecodeRes<T> {
+        f(self)
+    }
+
+    fn read_map<T>(&mut self, f: |&mut Decoder, uint| -> DecodeRes<T>) -> DecodeRes<T> {
+        let arity = try!(self._decode_map_arity());
+        f(self, arity)
+    }
+    fn read_map_elt_key<T>(&mut self, _idx: uint, f: |&mut Decoder| -> DecodeRes<T>) -> DecodeRes<T> {
+        f(self)
+    }
+    fn read_map_elt_val<T>(&mut self, _idx: uint, f: |&mut Decoder| -> DecodeRes<T>) -> DecodeRes<T> {
+        f(self)
+    }
+}
+
 fn main() {
     use std::io::{File,BufferedReader};
 
     for i in range(70, 120) {
         let tag: Option<ErlTermTag> = FromPrimitive::from_int(i);
-        println!("{} => {:?}", i, tag);
+        println!("{} => {}", i, tag);
     }
     println!("==============================");
     let map = vec!( (Atom("my_map_key".to_string()), Nil) );
