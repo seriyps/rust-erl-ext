@@ -625,6 +625,73 @@ impl<'a> Encoder<'a> {
         try!(self.wrtr.write_be_u32(bin.len() as u32));
         self.wrtr.write(bin.as_slice())
     }
+    fn encode_big(&mut self, num: bigint::BigInt) -> EncodeResult {
+        // there is no num.as_slice(), so, the only way to extract bytes is
+        // some bit or arithmetic operations. Maybe .div_rem()
+        Ok(())
+    }
+    fn encode_fun(&mut self, pid: Pid, module: Atom, index: u32, uniq: u32, free_vars: Vec<Eterm>) -> EncodeResult {
+        try!(self.wrtr.write_be_u32(free_vars.len() as u32));
+        try!(self.encode_term(Pid(pid)));
+        try!(self.encode_term(Atom(module)));
+        try!(self.encode_term(
+            if index <= 255 { SmallInteger(index as u8) }
+            else { Integer(index as i32) }));
+        try!(self.encode_term(
+            if uniq <= 255 { SmallInteger(uniq as u8) }
+            else { Integer(uniq as i32) }));
+        for term in free_vars.move_iter() {
+            try!(self.encode_term(term));
+        }
+        Ok(())
+    }
+    fn encode_new_fun(&mut self, arity: u8, uniq: Vec<u8>, index: u32, module: Atom, old_index: u32, old_uniq: u32, pid: Pid, free_vars: Vec<Eterm>) -> EncodeResult {
+        // FIXME: how to calculate this size? Maybe write to temporary MemWriter
+        // and then copy it to self.wrtr?
+        // Erlang itself in 'term_to_binary' does back-patching (see
+        // erts/emulator/beam/external.c#enc_term_int 'ENC_PATCH_FUN_SIZE'), but
+        // at the same time, in 'binary_to_term' this size u32 is just skipped!
+        // So, we may make this configurable: do fair encoding or cheaing with
+        // fake zero size.
+        try!(self.wrtr.write_be_u32(0));
+        try!(self.wrtr.write_u8(arity));
+        assert!(uniq.len() == 16);
+        try!(self.wrtr.write(uniq.as_slice()));
+        try!(self.wrtr.write_be_u32(index));
+        try!(self.wrtr.write_be_u32(free_vars.len() as u32));
+        try!(self.encode_term(Atom(module)));
+
+        let old_index_term = if old_index <= 255 {
+            SmallInteger(old_index as u8)
+        } else {
+            Integer(old_index as i32)
+        };
+        try!(self.encode_term(old_index_term));
+
+        let old_uniq_term = if old_uniq <= 255 {
+            SmallInteger(old_uniq as u8)
+        } else {
+            Integer(old_uniq as i32)
+        };
+        try!(self.encode_term(old_uniq_term));
+
+        try!(self.encode_term(Pid(pid)));
+
+        for term in free_vars.move_iter() {
+            try!(self.encode_term(term));
+        }
+        Ok(())
+    }
+    fn encode_export(&mut self, module: Atom, function: Atom, arity: u8) -> EncodeResult {
+        try!(self.encode_term(Atom(module)));
+        try!(self.encode_term(Atom(function)));
+        self.encode_term(SmallInteger(arity))
+    }
+    fn encode_bit_binary(&mut self, bits: u8, data: Vec<u8>) -> EncodeResult {
+        try!(self.wrtr.write_be_u32(data.len() as u32));
+        try!(self.wrtr.write_u8(bits));
+        self.wrtr.write(data.as_slice())
+    }
 
     fn _encode_tag(&mut self, tag: ErlTermTag) -> EncodeResult {
         let int_tag = tag as u8;
@@ -695,12 +762,32 @@ impl<'a> Encoder<'a> {
                 try!(self._encode_tag(BINARY_EXT));
                 self.encode_binary(bin)
             },
-            bad =>
+            BigNum(num) => {
+                // try!(self._encode_tag(if num < xxx {BIG_NUM_EXT}
+                //                       else {LARGE_BIG_EXT}));
+                // self.encode_big(num)
                 Err(io::IoError{
                     kind: io::OtherIoError,
-                    desc: "Not implemented",
-                    detail: Some(format!("Got {}", bad)),
+                    desc: "BIG_NUM_EXT not implemented",
+                    detail: Some(format!("Got {}", num)),
                 })
+            },
+            Fun{pid: pid, module: module, index: index, uniq: uniq, free_vars: free_vars} => {
+                try!(self._encode_tag(FUN_EXT));
+                self.encode_fun(pid, module, index, uniq, free_vars)
+            },
+            NewFun{arity: arity, uniq: uniq, index: index, module: module, old_index: old_index, old_uniq: old_uniq, pid: pid, free_vars: free_vars} => {
+                try!(self._encode_tag(NEW_FUN_EXT));
+                self.encode_new_fun(arity, uniq, index, module, old_index, old_uniq, pid, free_vars)
+            },
+            Export{module: module, function: function, arity: arity} => {
+                try!(self._encode_tag(EXPORT_EXT));
+                self.encode_export(module, function, arity)
+            },
+            BitBinary{bits: bits, data: data} => {
+                try!(self._encode_tag(BIT_BINARY_EXT));
+                self.encode_bit_binary(bits, data)
+            }
         }
     }
 }
