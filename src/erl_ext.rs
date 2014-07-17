@@ -12,8 +12,10 @@ use std::string::String;
 use std::vec::Vec;
 use std::num::FromPrimitive;
 use std::io;
+
 use num::bigint;
-// use serialize::{Encodable, Decodable};
+use std::num::Zero;
+use num::integer::Integer;
 
 
 #[deriving(FromPrimitive, Show, PartialEq)]
@@ -625,10 +627,37 @@ impl<'a> Encoder<'a> {
         try!(self.wrtr.write_be_u32(bin.len() as u32));
         self.wrtr.write(bin.as_slice())
     }
-    fn encode_big(&mut self, num: bigint::BigInt) -> EncodeResult {
+
+    fn _bigint_to_bytes(&self, num: bigint::BigInt) -> Vec<u8> {
         // there is no num.as_slice(), so, the only way to extract bytes is
-        // some bit or arithmetic operations. Maybe .div_rem()
-        Ok(())
+        // some arithmetic operations.
+        let mut bytes = Vec::new();
+        let mut n = num;
+        let quantor: bigint::BigInt = FromPrimitive::from_u16(256).unwrap();
+        while !n.is_zero() {
+            let (rest, byte) = n.div_rem(&quantor);
+            let byte_u8 = byte.to_u8().unwrap();
+            bytes.push(byte_u8);
+            n = rest;
+        }
+        bytes
+    }
+    fn _encode_big(&mut self, num: bigint::BigInt, bytes: Vec<u8>) -> EncodeResult {
+        let sign = if num.is_positive() {
+            0
+        } else {
+            1
+        };
+        try!(self.wrtr.write_u8(sign));
+        self.wrtr.write(bytes.as_slice())
+    }
+    fn encode_small_big(&mut self, num: bigint::BigInt, bytes: Vec<u8>) -> EncodeResult {
+        try!(self.wrtr.write_u8(bytes.len() as u8));
+        self._encode_big(num, bytes)
+    }
+    fn encode_large_big(&mut self, num: bigint::BigInt, bytes: Vec<u8>) -> EncodeResult {
+        try!(self.wrtr.write_be_u32(bytes.len() as u32));
+        self._encode_big(num, bytes)
     }
     fn encode_fun(&mut self, pid: Pid, module: Atom, index: u32, uniq: u32, free_vars: Vec<Eterm>) -> EncodeResult {
         try!(self.wrtr.write_be_u32(free_vars.len() as u32));
@@ -763,14 +792,14 @@ impl<'a> Encoder<'a> {
                 self.encode_binary(bin)
             },
             BigNum(num) => {
-                // try!(self._encode_tag(if num < xxx {BIG_NUM_EXT}
-                //                       else {LARGE_BIG_EXT}));
-                // self.encode_big(num)
-                Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "BIG_NUM_EXT not implemented",
-                    detail: Some(format!("Got {}", num)),
-                })
+                let num_bytes = self._bigint_to_bytes(num.clone());
+                if num_bytes.len() < 255 {
+                    try!(self._encode_tag(SMALL_BIG_EXT));
+                    self.encode_small_big(num, num_bytes)
+                } else {
+                    try!(self._encode_tag(LARGE_BIG_EXT))
+                    self.encode_large_big(num, num_bytes)
+                }
             },
             Fun{pid: pid, module: module, index: index, uniq: uniq, free_vars: free_vars} => {
                 try!(self._encode_tag(FUN_EXT));
