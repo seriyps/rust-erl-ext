@@ -376,7 +376,6 @@ impl<'a> Decoder<'a> {
         Ok(Atom(atom_str))
     }
     fn decode_fun(&mut self) -> DecodeResult {
-        // TODO: cleanup error handling (generalize)
         let num_free = try!(self.rdr.read_be_u32());
         let pid = match decode_some!(self, PID_EXT) {
             Pid(pid) => pid,
@@ -659,6 +658,7 @@ impl<'a> Encoder<'a> {
         try!(self.wrtr.write_be_u32(bytes.len() as u32));
         self._encode_big(num, bytes)
     }
+
     fn encode_fun(&mut self, pid: Pid, module: Atom, index: u32, uniq: u32, free_vars: Vec<Eterm>) -> EncodeResult {
         try!(self.wrtr.write_be_u32(free_vars.len() as u32));
         try!(self.encode_term(Pid(pid)));
@@ -680,7 +680,7 @@ impl<'a> Encoder<'a> {
         // Erlang itself in 'term_to_binary' does back-patching (see
         // erts/emulator/beam/external.c#enc_term_int 'ENC_PATCH_FUN_SIZE'), but
         // at the same time, in 'binary_to_term' this size u32 is just skipped!
-        // So, we may make this configurable: do fair encoding or cheaing with
+        // So, we may make this configurable: do fair encoding or cheating with
         // fake zero size.
         try!(self.wrtr.write_be_u32(0));
         try!(self.wrtr.write_u8(arity));
@@ -822,7 +822,7 @@ impl<'a> Encoder<'a> {
 }
 
 fn main() {
-    use std::io::{File,BufferedReader,MemWriter};
+    use std::io::{MemWriter,MemReader};
 
     for i in range(70, 120) {
         let tag: Option<ErlTermTag> = FromPrimitive::from_int(i);
@@ -852,30 +852,36 @@ fn main() {
     };
     println!("{}", term);
     println!("==============================");
-    let mut f = BufferedReader::new(File::open(&Path::new("test/test_terms.bin")));
-    let mut builder = Decoder::new(&mut f);
-    match builder.read_prelude() {
-        Ok(true) =>
-            println!("Valid eterm"),
-        Ok(false) =>
-            println!("Invalid eterm!"),
-        Err(io::IoError{desc: d, ..}) => {
-            println!("IoError: {}", d);
-            return
-        }
-    }
-    let term = builder.decode_term();
-    println!("{}", term);
-    println!("==============================");
-
-    let orig_bin = File::open(&Path::new("test/test_terms.bin")).read_to_end().unwrap();
+    let content = io::stdin()  //File::open(&Path::new("test/test_terms.bin"));
+        .read_to_end()
+        .unwrap();
+    let mut rdr = MemReader::new(content);
     let mut wrtr = MemWriter::new();
     {
+        // decode terms from stdin
+        let mut builder = Decoder::new(&mut rdr);
+        match builder.read_prelude() {
+            Ok(true) =>
+                println!("Valid eterm"),
+            Ok(false) =>
+                println!("Invalid eterm!"),
+            Err(io::IoError{desc: d, ..}) => {
+                println!("IoError: {}", d);
+                return
+            }
+        }
+        let term_opt = builder.decode_term();
+        println!("{}", term_opt);
+
+        println!("==============================");
+
+        // encode them back
         let mut encoder = Encoder::new(&mut wrtr, false, false);
         encoder.write_prelude().unwrap();
-        encoder.encode_term(term.unwrap()).unwrap();
+        encoder.encode_term(term_opt.unwrap()).unwrap();
     }
+
+    println!("orig: {}", rdr.get_ref());
     println!(" enc: {}", wrtr.get_ref());
-    println!("orig: {}", orig_bin.as_slice());
-    assert!(wrtr.get_ref() == orig_bin.as_slice())
+    assert!(wrtr.get_ref() == rdr.get_ref())
 }
