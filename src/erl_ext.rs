@@ -531,6 +531,7 @@ struct Encoder<'a> {
     wrtr: &'a mut io::Writer,
     use_utf8_atoms: bool,
     use_small_atoms: bool,
+    fair_new_fun: bool,
     //use_new_float: bool, (>=R11B)
 }
 
@@ -538,10 +539,11 @@ struct Encoder<'a> {
 impl<'a> Encoder<'a> {
     // TODO: asserts for overflows
 
-    fn new<'a>(writer: &'a mut io::Writer, utf8_atoms: bool, small_atoms: bool) -> Encoder<'a> {
+    fn new<'a>(writer: &'a mut io::Writer, utf8_atoms: bool, small_atoms: bool, fair_new_fun: bool) -> Encoder<'a> {
         Encoder{wrtr: writer,
                 use_utf8_atoms: utf8_atoms,
-                use_small_atoms: small_atoms}
+                use_small_atoms: small_atoms,
+                fair_new_fun: fair_new_fun}
     }
 
     fn write_prelude(&mut self) -> EncodeResult {
@@ -674,15 +676,7 @@ impl<'a> Encoder<'a> {
         }
         Ok(())
     }
-    fn encode_new_fun(&mut self, arity: u8, uniq: Vec<u8>, index: u32, module: Atom, old_index: u32, old_uniq: u32, pid: Pid, free_vars: Vec<Eterm>) -> EncodeResult {
-        // FIXME: how to calculate this size? Maybe write to temporary MemWriter
-        // and then copy it to self.wrtr?
-        // Erlang itself in 'term_to_binary' does back-patching (see
-        // erts/emulator/beam/external.c#enc_term_int 'ENC_PATCH_FUN_SIZE'), but
-        // at the same time, in 'binary_to_term' this size u32 is just skipped!
-        // So, we may make this configurable: do fair encoding or cheating with
-        // fake zero size.
-        try!(self.wrtr.write_be_u32(0));
+    fn _encode_new_fun(&mut self, arity: u8, uniq: Vec<u8>, index: u32, module: Atom, old_index: u32, old_uniq: u32, pid: Pid, free_vars: Vec<Eterm>) -> EncodeResult {
         try!(self.wrtr.write_u8(arity));
         assert!(uniq.len() == 16);
         try!(self.wrtr.write(uniq.as_slice()));
@@ -710,6 +704,29 @@ impl<'a> Encoder<'a> {
             try!(self.encode_term(term));
         }
         Ok(())
+    }
+    fn encode_new_fun(&mut self, arity: u8, uniq: Vec<u8>, index: u32, module: Atom, old_index: u32, old_uniq: u32, pid: Pid, free_vars: Vec<Eterm>) -> EncodeResult {
+        // We serialize to temporary memory buffer to calculate encoded term size.
+        // Erlang itself in 'term_to_binary' does back-patching (see
+        // erts/emulator/beam/external.c#enc_term_int 'ENC_PATCH_FUN_SIZE'), but
+        // at the same time, in 'binary_to_term' this size u32 is just skipped!
+        // So, we make this configurable: do fair encoding or cheating with
+        // fake zero size.
+        if self.fair_new_fun {
+            let mut temp = io::MemWriter::new();
+            {
+                let mut encoder = Encoder::new(&mut temp, self.use_utf8_atoms, self.use_small_atoms, self.fair_new_fun);
+                try!(encoder._encode_new_fun(arity, uniq, index, module, old_index, old_uniq, pid, free_vars));
+            }
+            let size = temp.get_ref().len();
+            // +4 is size itself
+            try!(self.wrtr.write_be_u32(4 + size as u32));
+            self.wrtr.write(temp.get_ref())
+        } else {
+            // cheating - write 0, since binary_to_term don't use this (at least now, in 17.0)
+            try!(self.wrtr.write_be_u32(0));
+            self._encode_new_fun(arity, uniq, index, module, old_index, old_uniq, pid, free_vars)
+        }
     }
     fn encode_export(&mut self, module: Atom, function: Atom, arity: u8) -> EncodeResult {
         try!(self.encode_term(Atom(module)));
@@ -876,7 +893,7 @@ fn main() {
         println!("==============================");
 
         // encode them back
-        let mut encoder = Encoder::new(&mut wrtr, false, false);
+        let mut encoder = Encoder::new(&mut wrtr, false, false, true);
         encoder.write_prelude().unwrap();
         encoder.encode_term(term_opt.unwrap()).unwrap();
     }
