@@ -633,7 +633,7 @@ impl<'a> Encoder<'a> {
         // there is no num.as_slice(), so, the only way to extract bytes is
         // some arithmetic operations.
         let mut bytes = Vec::new();
-        let mut n = num;
+        let mut n = num.abs();
         let quantor: bigint::BigInt = FromPrimitive::from_u16(256).unwrap();
         while !n.is_zero() {
             let (rest, byte) = n.div_rem(&quantor);
