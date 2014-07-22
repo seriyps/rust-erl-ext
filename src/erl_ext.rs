@@ -1,4 +1,9 @@
-// See erts-6.1/doc/html/erl_ext_dist.html
+// See erts-6.1/doc/html/erl_ext_dist.html for binary format description.
+
+// #![crate_id = "erl_ext#0.0.1"]
+#![comment = "Erlang external term format codec for Rust"]
+#![license = "APL2.0"]
+#![crate_type = "lib"]
 
 #![feature(struct_variant)]     // this is for enum Eterm
 #![allow(non_camel_case_types)] // this is for enum ErlTermTag
@@ -19,7 +24,7 @@ use num::integer::Integer;
 
 
 #[deriving(FromPrimitive, Show, PartialEq)]
-enum ErlTermTag {
+pub enum ErlTermTag {
     // ATOM_CACHE_REF = 82,
     SMALL_INTEGER_EXT = 97,
     INTEGER_EXT = 98,
@@ -120,9 +125,9 @@ pub struct Pid {                // moved out from enum because it used in Eterm:
 //     BadFloat(Vec<u8>),
 // }
 
-type DecodeResult = io::IoResult<Eterm>;//, DecodeError>;
+pub type DecodeResult = io::IoResult<Eterm>;//, DecodeError>;
 
-struct Decoder<'a> {
+pub struct Decoder<'a> {
     rdr: &'a mut io::Reader,
 }
 
@@ -155,10 +160,10 @@ macro_rules! decode_some(
 )
 
 impl<'a> Decoder<'a> {
-    fn new(rdr: &'a mut io::Reader) -> Decoder<'a> {
+    pub fn new(rdr: &'a mut io::Reader) -> Decoder<'a> {
         Decoder{rdr: rdr}
     }
-    fn read_prelude(&mut self) -> io::IoResult<bool> {
+    pub fn read_prelude(&mut self) -> io::IoResult<bool> {
         Ok(131 == try!(self.rdr.read_u8()))
     }
     fn decode_small_integer(&mut self) -> DecodeResult {
@@ -492,7 +497,7 @@ impl<'a> Decoder<'a> {
                 })
         }
     }
-    fn decode_term(&mut self) -> DecodeResult {
+    pub fn decode_term(&mut self) -> DecodeResult {
         let tag = try!(self._decode_tag());
         self.decode_concrete_term(tag)
     }
@@ -527,7 +532,7 @@ impl<'a> Decoder<'a> {
 
 pub type EncodeResult = io::IoResult<()>; // TODO: maybe return num bytes written?
 
-struct Encoder<'a> {
+pub struct Encoder<'a> {
     wrtr: &'a mut io::Writer,
     use_utf8_atoms: bool,
     use_small_atoms: bool,
@@ -539,14 +544,14 @@ struct Encoder<'a> {
 impl<'a> Encoder<'a> {
     // TODO: asserts for overflows
 
-    fn new<'a>(writer: &'a mut io::Writer, utf8_atoms: bool, small_atoms: bool, fair_new_fun: bool) -> Encoder<'a> {
+    pub fn new<'a>(writer: &'a mut io::Writer, utf8_atoms: bool, small_atoms: bool, fair_new_fun: bool) -> Encoder<'a> {
         Encoder{wrtr: writer,
                 use_utf8_atoms: utf8_atoms,
                 use_small_atoms: small_atoms,
                 fair_new_fun: fair_new_fun}
     }
 
-    fn write_prelude(&mut self) -> EncodeResult {
+    pub fn write_prelude(&mut self) -> EncodeResult {
         self.wrtr.write_u8(131)
     }
 
@@ -743,7 +748,7 @@ impl<'a> Encoder<'a> {
         let int_tag = tag as u8;
         self.wrtr.write_u8(int_tag)
     }
-    fn encode_term(&mut self, term: Eterm) -> EncodeResult {
+    pub fn encode_term(&mut self, term: Eterm) -> EncodeResult {
         // XXX: maybe use &Eterm, not just Eterm?
         match term {
             SmallInteger(num) => {
@@ -836,69 +841,4 @@ impl<'a> Encoder<'a> {
             }
         }
     }
-}
-
-fn main() {
-    use std::io::{MemWriter,MemReader};
-
-    for i in range(70, 120) {
-        let tag: Option<ErlTermTag> = FromPrimitive::from_int(i);
-        println!("{} => {}", i, tag);
-    }
-    println!("==============================");
-    let map = vec!( (Atom("my_map_key".to_string()), Nil) );
-
-    let term: Eterm = NewFun {
-        arity: 3,
-        uniq: vec!(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16),
-        index: 10,
-        module: "my_mod".to_string(),
-        old_index: 1212,
-        old_uniq: 1234,
-        pid: Pid {node: "wasd".to_string(), id: 1, serial: 123, creation: 2},
-        free_vars: vec!(//Float(3.14),
-                        Nil,
-                        Binary(vec!(1, 2, 3, 4)),
-                        Export {
-                            module: "my_mod".to_string(),
-                            function: "my_func".to_string(),
-                            arity: 4},
-                        List(vec!(SmallInteger(1), Integer(1000000), Nil)),
-                        Tuple(vec!(Atom("record".to_string()), Map(map))),
-                        ),
-    };
-    println!("{}", term);
-    println!("==============================");
-    let content = io::stdin()  //File::open(&Path::new("test/test_terms.bin"));
-        .read_to_end()
-        .unwrap();
-    let mut rdr = MemReader::new(content);
-    let mut wrtr = MemWriter::new();
-    {
-        // decode terms from stdin
-        let mut builder = Decoder::new(&mut rdr);
-        match builder.read_prelude() {
-            Ok(true) =>
-                println!("Valid eterm"),
-            Ok(false) =>
-                println!("Invalid eterm!"),
-            Err(io::IoError{desc: d, ..}) => {
-                println!("IoError: {}", d);
-                return
-            }
-        }
-        let term_opt = builder.decode_term();
-        println!("{}", term_opt);
-
-        println!("==============================");
-
-        // encode them back
-        let mut encoder = Encoder::new(&mut wrtr, false, false, true);
-        encoder.write_prelude().unwrap();
-        encoder.encode_term(term_opt.unwrap()).unwrap();
-    }
-
-    println!("orig: {}", rdr.get_ref());
-    println!(" enc: {}", wrtr.get_ref());
-    assert!(wrtr.get_ref() == rdr.get_ref())
 }

@@ -1,0 +1,11 @@
+[package]
+
+name = "rust_erl_ext"
+version = "0.0.1"
+authors = ["Sergey Prokhorov <me@seriyps.ru>"]
+
+
+[[lib]]
+
+name = "erl_ext"
+# path = "src/erl_ext.rs"
