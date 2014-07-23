@@ -1,5 +1,7 @@
 extern crate erl_ext;
+extern crate getopts;
 
+use getopts::{optopt,optflag,getopts,OptGroup};
 use erl_ext::{Decoder,Encoder};
 use std::io;
 use std::os;
@@ -7,18 +9,29 @@ use std::os;
 
 fn main() {
     let args = os::args();
-    if args.len() < 3 {
-        // TODO: make encoder opts configurable
-        println!("Usage: codec <in-file or '-'> <out-file or '-'>");
+    let opts = [
+        optflag("u", "utf8-atoms", "Use utf-8 atoms feature"),
+        optflag("s", "small-atoms", "Use small atoms feature"),
+        optflag("f", "fair-new-fun", "Fairly calculate NEW_FUN size (requires extra memory)"),
+        ];
+    let matches = match getopts(args.tail(), opts) {
+        Ok(m) => { m }
+        Err(f) => { fail!(f.to_string()) }
+    };
+    if matches.free.len() != 2 {
+        println!("Usage: {} [opts] <in-file or '-'> <out-file or '-'>", args[0]);
+        for o in opts.iter() {
+            println!("-{}\t--{}\t{}", o.short_name, o.long_name, o.desc);
+        }
         os::set_exit_status(1);
         return
     }
-    let mut in_f = match args[1].as_slice() {
+    let mut in_f = match matches.free[0].as_slice() {
         "-" => box io::stdin() as Box<io::Reader>,
         other =>
             box io::File::open(&Path::new(other)).unwrap() as Box<io::Reader>
     };
-    let mut out_f = match args[2].as_slice() {
+    let mut out_f = match matches.free[1].as_slice() {
         "-" => box io::stdout() as Box<io::Writer>,
         other =>
             box io::File::create(&Path::new(other)).unwrap() as Box<io::Writer>
@@ -40,9 +53,12 @@ fn main() {
         }
         let term = decoder.decode_term().unwrap();
         // print it to stderr
-        (write!(io::stderr(), "{}", term)).unwrap();
+        (write!(io::stderr(), "{}\n", term)).unwrap();
         // and encode it
-        let mut encoder = Encoder::new(&mut wrtr, false, false, true);
+        let mut encoder = Encoder::new(&mut wrtr,
+                                       matches.opt_present("u"),
+                                       matches.opt_present("s"),
+                                       matches.opt_present("f"));
         encoder.write_prelude().unwrap();
         encoder.encode_term(term).unwrap();
     }
@@ -51,7 +67,7 @@ fn main() {
 
     // compare original and encoded
     if wrtr.get_ref() != rdr.get_ref() {
-        (write!(io::stderr(), "Before and After isn't equal")).unwrap();
+        (write!(io::stderr(), "Before and After isn't equal\n")).unwrap();
         os::set_exit_status(1);
         return
     }
