@@ -1,7 +1,7 @@
 extern crate erl_ext;
 extern crate getopts;
 
-use getopts::{optopt,optflag,getopts,OptGroup};
+use getopts::{optflag,getopts};
 use erl_ext::{Decoder,Encoder};
 use std::io;
 use std::os;

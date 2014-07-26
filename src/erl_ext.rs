@@ -53,7 +53,7 @@ pub enum ErlTermTag {
     SMALL_ATOM_UTF8_EXT = 119,
 }
 
-#[deriving(Show)]
+#[deriving(Show, PartialEq)]
 pub enum Eterm {
     SmallInteger(u8),           // small_integer
     Integer(i32),               // integer
@@ -106,7 +106,7 @@ pub type Map = Vec<(Eterm, Eterm)>; // k-v pairs
 pub type List = Vec<Eterm>;
 
 
-#[deriving(Show)]
+#[deriving(Show, PartialEq)]
 pub struct Pid {                // moved out from enum because it used in Eterm::{Fun,NewFun}
     node: Atom,
     id: u32,
@@ -840,5 +840,196 @@ impl<'a> Encoder<'a> {
                 self.encode_bit_binary(bits, data)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{Eterm,Encoder,Decoder,DecodeResult};
+    use std::io;
+    use num::bigint;
+    use std::num::Bounded;
+
+    fn term_to_binary(term: Eterm) -> io::IoResult<Vec<u8>> {
+        let mut writer = io::MemWriter::new();
+        {
+            let mut encoder = Encoder::new(&mut writer, false, false, true);
+            try!(encoder.write_prelude());
+            try!(encoder.encode_term(term));
+        }
+        Ok(writer.unwrap())
+    }
+    fn binary_to_term(binary: Vec<u8>) -> DecodeResult {
+        let mut reader = io::MemReader::new(binary);
+        let mut decoder = Decoder::new(&mut reader);
+        assert!(true == try!(decoder.read_prelude()));
+        decoder.decode_term()
+    }
+
+    macro_rules! codec_eq (
+        ($inp:expr) => {
+            assert_eq!($inp, binary_to_term(term_to_binary($inp).unwrap()).unwrap())
+        };
+    )
+
+
+    #[test]
+    fn codec_small_integer() {
+        codec_eq!(super::SmallInteger(0));
+        codec_eq!(super::SmallInteger(255));
+    }
+
+    #[test]
+    fn codec_integer() {
+        codec_eq!(super::Integer(-2147483647));
+        codec_eq!(super::Integer(-1));
+        codec_eq!(super::Integer(256));
+        codec_eq!(super::Integer(2147483647));
+    }
+
+    #[test]
+    fn codec_float() {
+        codec_eq!(super::Float(-111111.11));
+        codec_eq!(super::Float(0.0));
+        codec_eq!(super::Float(111111.11));
+    }
+
+    #[test]
+    fn codec_atom() {
+        codec_eq!(super::Atom(String::from_str("hello_world")));
+    }
+
+    // #[test]
+    // fn codec_reference() {
+    //     let node = String::from_str("my_node");
+    //     let reference = super::Reference {
+    //         node: node,
+    //         id: vec!(0, 1, 2, 3),
+    //         creation: 0
+    //     };
+    //     codec_eq!(reference);
+    // }
+
+    #[test]
+    fn codec_port() {
+        codec_eq!(super::Port {
+            node: String::from_str("my_node"),
+            id: 4294967295,
+            creation: 0
+        });
+    }
+
+    #[test]
+    fn codec_pid() {
+        codec_eq!(super::Pid(super::Pid {
+            node: String::from_str("my_node"),
+            id: 4294967295,
+            serial: 1,
+            creation: 0
+        }));
+    }
+
+    #[test]
+    fn codec_tuple() {
+        codec_eq!(super::Tuple(vec!(
+            super::SmallInteger(0),
+            super::Nil
+                )));
+    }
+
+    // #[test]
+    // fn codec_map() {
+    //     // #{0 => {}, 0.0 => -1}
+    //     let mut map: super::Map = Vec::new();
+    //     map.push((super::SmallInteger(0), super::Tuple(vec!())));
+    //     map.push((super::Float(0.0), super::Integer(-1)));
+    //     let emap = super::Map(map);
+    //     codec_eq!(emap);
+    // }
+
+    #[test]
+    fn codec_nil() {
+        codec_eq!(super::Nil);
+    }
+
+    #[test]
+    fn codec_string() {
+        codec_eq!(super::String(Vec::from_fn(255, |i| i as u8)));
+    }
+
+    #[test]
+    fn codec_list() {
+        codec_eq!(super::List(vec!(
+            super::Tuple(vec!()),
+            super::SmallInteger(1),
+            super::Nil,
+            )));
+    }
+
+    #[test]
+    fn codec_binary() {
+        codec_eq!(super::Binary(Vec::from_fn(1024, |i| (i % 255) as u8)));
+    }
+
+    #[test]
+    fn codec_big_num() {
+        codec_eq!(super::BigNum(bigint::BigInt::new(bigint::Plus, vec!(1, 1, 1, 1, 1, 1))));
+        codec_eq!(super::BigNum(bigint::BigInt::new(bigint::Minus, vec!(1, 1, 1, 1, 1, 1))));
+        codec_eq!(super::BigNum(FromPrimitive::from_i64(Bounded::max_value()).unwrap()));
+        codec_eq!(super::BigNum(bigint::BigInt::new(bigint::Plus, Vec::from_fn(256, |i| i as u32))));
+    }
+
+    // #[test]
+    // fn codec_fun() {
+    //     let pid = super::Pid {
+    //         node: String::from_str("my_node"),
+    //         id: 4294967295,
+    //         serial: 1,
+    //         creation: 0
+    //     };
+    //     codec_eq!(super::Fun {
+    //         pid: pid,
+    //         module: String::from_str("my_mod"),
+    //         index: 1,
+    //         uniq: Bounded::max_value(),
+    //         free_vars: vec!(super::Nil)
+    //     });
+    // }
+
+    // #[test]
+    // fn codec_new_fun() {
+    //     let pid = super::Pid {
+    //         node: String::from_str("my_node"),
+    //         id: Bounded::max_value(),
+    //         serial: 1,
+    //         creation: 0
+    //     };
+    //     codec_eq!(super::NewFun {
+    //         arity: 128,         // :-)
+    //         uniq: Vec::from_fn(16, |i| i as u8),
+    //         index: Bounded::max_value(),
+    //         module: String::from_str("my_mod"),
+    //         old_index: Bounded::max_value(),
+    //         old_uniq: Bounded::max_value(),
+    //         pid: pid,
+    //         free_vars: vec!(super::Nil)
+    //     });
+    // }
+
+    #[test]
+    fn codec_export() {
+        codec_eq!(super::Export {
+            module: String::from_str("my_mod"),
+            function: String::from_str("my_fun"),
+            arity: Bounded::max_value()
+        });
+    }
+
+    #[test]
+    fn codec_bit_binary() {
+        codec_eq!(super::BitBinary {
+            bits: 1,
+            data: vec!(255, 255)
+        });
     }
 }
