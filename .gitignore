@@ -1,2 +1,2 @@
-test/data/*.bin
+tests/data/*.bin
 target/

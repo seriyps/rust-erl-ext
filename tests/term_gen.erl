@@ -4,9 +4,11 @@
 -export([main/1]).
 
 main([]) ->
+    DataDir = filename:join("tests", "data"),
+    ok = filelib:ensure_dir(DataDir),
     W = fun(Name, Term) ->
                 ok = file:write_file(
-                       filename:join(["test", "data", Name ++ ".bin"]),
+                       filename:join(DataDir, Name ++ ".bin"),
                        term_to_binary(Term))
         end,
     lists:foreach(fun({N, T}) -> W(N, T) end, primitive_terms()),
@@ -56,4 +58,3 @@ container_terms() ->
      {"Tuple", fun(Terms) -> list_to_tuple(Terms) end}, %small & large tuples
      {"Map", fun(Terms) -> maps:from_list([{T, T} || T <- Terms]) end},
      {"String", fun(_) -> lists:seq(0, 255) end}].
-    
