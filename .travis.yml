@@ -2,6 +2,9 @@
 # anyway
 language: erlang
 
+otp_release:
+   - 17.0
+
 install:
   - curl http://www.rust-lang.org/rustup.sh | sudo sh -
 

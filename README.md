@@ -43,11 +43,32 @@ fn main() {
 
 More examples are in `examples` directory.
 
+Types (all Erlang 17.1 types are supported):
+
+* SmallInteger (u8)     : `0..255`
+* Integer (i32)         : `integer()`
+* Float (f64)           : `float()`
+* Atom (String)         : `atom()`
+* Reference             : `reference()` erlang:make_ref/0
+* Port                  : `port()` eg, socket or raw file or `erlang:open_port/2`
+* Pid                   : `pid()`
+* Tuple (Vec<Eterm>)    : `{...}`
+* Map (Vec<(Eterm, Eterm)>)  : `#{...}`
+* Nil                   : `[]`
+* String (Vec<u8>)      : `[0..255]`
+* List (Vec<Eterm>)     : `[any()]`
+* Binary (Vec<u8>)      : `binary()`
+* BigNum (BigInt)       : `integer() > i32`
+* Fun                   : `fun(..) -> ... end.` - deprecated variant
+* NewFun                : `fun(..) -> ... end.`
+* Export                : `fun my_mod:my_fun/1`
+* BitBinary             : `<<128, 128:4>>`
+
+
 TODO
 ----
 
 * `serialize::Decoder` and `serialize::Encoder` implementations (not so easy for containers)
-* Unit and functional tests
 * Quick-Check - like tests (feed pseudo-random bytes to decoder, feed random Eterm's to encoder)
 
 Keywords
