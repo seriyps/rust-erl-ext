@@ -4,6 +4,8 @@ Rust Erl Ext
 [Erlang external term format](http://erlang.org/doc/apps/erts/erl_ext_dist.html)
 parser/serializer for Rust.
 
+[![Build Status](https://travis-ci.org/seriyps/rust-erl-ext.png?branch=master)](https://travis-ci.org/seriyps/rust-erl-ext)
+
 Examples
 -------
 

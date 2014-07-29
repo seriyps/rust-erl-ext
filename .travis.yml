@@ -1,0 +1,10 @@
+# Travis doesn't support Rust, so we set it to Erlang, since we need escript
+# anyway
+language: erlang
+
+install:
+  - curl http://www.rust-lang.org/rustup.sh | sudo sh -
+
+script:
+  - cargo build --verbose
+  - cargo test --verbose
