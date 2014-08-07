@@ -49,16 +49,16 @@ Types (all Erlang 17.1 types are supported):
 * Integer (i32)         : `integer()`
 * Float (f64)           : `float()`
 * Atom (String)         : `atom()`
-* Reference             : `reference()` erlang:make_ref/0
+* Reference             : `reference()` `erlang:make_ref/0`
 * Port                  : `port()` eg, socket or raw file or `erlang:open_port/2`
 * Pid                   : `pid()`
-* Tuple (Vec<Eterm>)    : `{...}`
-* Map (Vec<(Eterm, Eterm)>)  : `#{...}`
+* Tuple (`Vec<Eterm>`)  : `{ any() }`
+* Map (`Vec<(Eterm, Eterm)>`) : `#{any() := any()}`
 * Nil                   : `[]`
-* String (Vec<u8>)      : `[0..255]`
-* List (Vec<Eterm>)     : `[any()]`
-* Binary (Vec<u8>)      : `binary()`
-* BigNum (BigInt)       : `integer() > i32`
+* String (`Vec<u8>`)    : `[0..255]`
+* List (`Vec<Eterm>`)   : `[ any() ]`
+* Binary (`Vec<u8>`)    : `binary()`
+* BigNum (`BigInt`)     : `integer() > i32`
 * Fun                   : `fun(..) -> ... end.` - deprecated variant
 * NewFun                : `fun(..) -> ... end.`
 * Export                : `fun my_mod:my_fun/1`
