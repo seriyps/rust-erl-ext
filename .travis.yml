@@ -11,3 +11,5 @@ install:
 script:
   - cargo build --verbose
   - cargo test --verbose
+  - escript examples/erlang_rust_port.erl
+  - escript examples/json_port.erl

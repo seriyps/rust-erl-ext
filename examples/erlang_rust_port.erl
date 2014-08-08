@@ -19,7 +19,7 @@ main([PortPath]) ->
              {spawn_executable, AbsPortPath},
              [{args, ["-u", "-s", "-f"]},
               binary]),
-    ok = loop(Port, 2000),
+    ok = loop(Port, 500),
     erlang:port_close(Port).
 
 
