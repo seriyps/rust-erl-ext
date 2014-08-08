@@ -20,6 +20,7 @@ main([PortPath]) ->
              [{args, ["-u", "-s", "-f"]},
               binary]),
     ok = loop(Port, 500),
+    io:format("~nok~n"),
     erlang:port_close(Port).
 
 

@@ -24,7 +24,7 @@ main([PortPath]) ->
 
     erlang:port_close(Port).
 
-run(Port, []) -> ok;
+run(_, []) -> ok;
 run(Port, [JsonBin | Examples]) ->
     Json = parse(Port, JsonBin),
     io:format("==========~nJson:~n'~tp'~nErlang:~n'~p'~n",
