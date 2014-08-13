@@ -53,7 +53,7 @@ pub enum ErlTermTag {
     SMALL_ATOM_UTF8_EXT = 119,
 }
 
-#[deriving(Show, PartialEq)]
+#[deriving(Show, PartialEq, Clone)]
 pub enum Eterm {
     SmallInteger(u8),           // small_integer
     Integer(i32),               // integer
@@ -106,7 +106,7 @@ pub type Map = Vec<(Eterm, Eterm)>; // k-v pairs
 pub type List = Vec<Eterm>;
 
 
-#[deriving(Show, PartialEq)]
+#[deriving(Show, PartialEq, Clone)]
 pub struct Pid {                // moved out from enum because it used in Eterm::{Fun,NewFun}
     node: Atom,
     id: u32,
@@ -868,7 +868,11 @@ mod test {
 
     macro_rules! codec_eq (
         ($inp:expr) => {
-            assert_eq!($inp, binary_to_term(term_to_binary($inp).unwrap()).unwrap())
+            {
+                let orig = $inp;
+                let teleported = binary_to_term(term_to_binary(orig.clone()).unwrap()).unwrap();
+                assert_eq!(orig, teleported);
+            }
         };
     )
 
@@ -899,16 +903,16 @@ mod test {
         codec_eq!(super::Atom(String::from_str("hello_world")));
     }
 
-    // #[test]
-    // fn codec_reference() {
-    //     let node = String::from_str("my_node");
-    //     let reference = super::Reference {
-    //         node: node,
-    //         id: vec!(0, 1, 2, 3),
-    //         creation: 0
-    //     };
-    //     codec_eq!(reference);
-    // }
+    #[test]
+    fn codec_reference() {
+        let node = String::from_str("my_node");
+        let reference = super::Reference {
+            node: node,
+            id: vec!(0, 1, 2, 3),
+            creation: 0
+        };
+        codec_eq!(reference);
+    }
 
     #[test]
     fn codec_port() {
@@ -937,15 +941,15 @@ mod test {
                 )));
     }
 
-    // #[test]
-    // fn codec_map() {
-    //     // #{0 => {}, 0.0 => -1}
-    //     let mut map: super::Map = Vec::new();
-    //     map.push((super::SmallInteger(0), super::Tuple(vec!())));
-    //     map.push((super::Float(0.0), super::Integer(-1)));
-    //     let emap = super::Map(map);
-    //     codec_eq!(emap);
-    // }
+    #[test]
+    fn codec_map() {
+        // #{0 => {}, 0.0 => -1}
+        let mut map: super::Map = Vec::new();
+        map.push((super::SmallInteger(0), super::Tuple(vec!())));
+        map.push((super::Float(0.0), super::Integer(-1)));
+        let emap = super::Map(map);
+        codec_eq!(emap);
+    }
 
     #[test]
     fn codec_nil() {
@@ -979,42 +983,42 @@ mod test {
         codec_eq!(super::BigNum(bigint::BigInt::new(bigint::Plus, Vec::from_fn(256, |i| i as u32))));
     }
 
-    // #[test]
-    // fn codec_fun() {
-    //     let pid = super::Pid {
-    //         node: String::from_str("my_node"),
-    //         id: 4294967295,
-    //         serial: 1,
-    //         creation: 0
-    //     };
-    //     codec_eq!(super::Fun {
-    //         pid: pid,
-    //         module: String::from_str("my_mod"),
-    //         index: 1,
-    //         uniq: Bounded::max_value(),
-    //         free_vars: vec!(super::Nil)
-    //     });
-    // }
+    #[test]
+    fn codec_fun() {
+        let pid = super::Pid {
+            node: String::from_str("my_node"),
+            id: 4294967295,
+            serial: 1,
+            creation: 0
+        };
+        codec_eq!(super::Fun {
+            pid: pid,
+            module: String::from_str("my_mod"),
+            index: 1,
+            uniq: Bounded::max_value(),
+            free_vars: vec!(super::Nil)
+        });
+    }
 
-    // #[test]
-    // fn codec_new_fun() {
-    //     let pid = super::Pid {
-    //         node: String::from_str("my_node"),
-    //         id: Bounded::max_value(),
-    //         serial: 1,
-    //         creation: 0
-    //     };
-    //     codec_eq!(super::NewFun {
-    //         arity: 128,         // :-)
-    //         uniq: Vec::from_fn(16, |i| i as u8),
-    //         index: Bounded::max_value(),
-    //         module: String::from_str("my_mod"),
-    //         old_index: Bounded::max_value(),
-    //         old_uniq: Bounded::max_value(),
-    //         pid: pid,
-    //         free_vars: vec!(super::Nil)
-    //     });
-    // }
+    #[test]
+    fn codec_new_fun() {
+        let pid = super::Pid {
+            node: String::from_str("my_node"),
+            id: Bounded::max_value(),
+            serial: 1,
+            creation: 0
+        };
+        codec_eq!(super::NewFun {
+            arity: 128,         // :-)
+            uniq: Vec::from_fn(16, |i| i as u8),
+            index: Bounded::max_value(),
+            module: String::from_str("my_mod"),
+            old_index: Bounded::max_value(),
+            old_uniq: Bounded::max_value(),
+            pid: pid,
+            free_vars: vec!(super::Nil)
+        });
+    }
 
     #[test]
     fn codec_export() {
