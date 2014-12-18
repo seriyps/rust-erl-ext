@@ -12,7 +12,7 @@
 -mode(compile).
 
 main([]) ->
-    main(["target/test/erlang_rust_port"]);
+    main(["target/examples/erlang_rust_port"]);
 main([PortPath]) ->
     AbsPortPath = filename:absname(PortPath),
     Port = erlang:open_port(

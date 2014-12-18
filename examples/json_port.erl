@@ -8,7 +8,7 @@
 -mode(compile).
 
 main([]) ->
-    main(["target/test/json_port"]);
+    main(["target/examples/json_port"]);
 main([PortPath]) ->
     AbsPortPath = filename:absname(PortPath),
     Port = erlang:open_port(

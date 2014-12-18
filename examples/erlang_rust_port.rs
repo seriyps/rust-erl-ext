@@ -5,6 +5,7 @@ extern crate getopts;
 use getopts::{optflag,getopts};
 use erl_ext::{Decoder,Encoder};
 use std::io;
+use std::io::stdio;
 use std::os;
 
 
@@ -20,8 +21,8 @@ fn main() {
         Err(f) => { panic!(f.to_string()) }
     };
 
-    let mut in_f = io::stdin();
-    let mut out_f = io::stdout();
+    let mut in_f = stdio::stdin_raw();
+    let mut out_f = stdio::stdout_raw();
     // let mut out_writer = std::io::BufferedWriter::with_capacity(20480,
     //                                                             out_f.unwrap());
     let decoder = Decoder::new(&mut in_f);
