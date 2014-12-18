@@ -1,11 +1,16 @@
 [package]
 
 name = "rust_erl_ext"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Sergey Prokhorov <me@seriyps.ru>"]
 
 
-[[lib]]
+[lib]
 
 name = "erl_ext"
 # path = "src/erl_ext.rs"
+
+
+[dependencies.num]
+
+git = "https://github.com/rust-lang/num.git"

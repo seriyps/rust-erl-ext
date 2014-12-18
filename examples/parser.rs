@@ -20,9 +20,9 @@ fn main() {
     let mut decoder = Decoder::new(&mut f);
     match decoder.read_prelude() {
         Ok(false) =>
-            fail!("Invalid eterm!"),
+            panic!("Invalid eterm!"),
         Err(io::IoError{desc: d, ..}) =>
-            fail!("IoError: {}", d),
+            panic!("IoError: {}", d),
         _ => ()
     }
     let term_opt = decoder.decode_term();

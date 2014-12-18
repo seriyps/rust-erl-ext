@@ -1,2 +1,3 @@
 tests/data/*.bin
 target/
+Cargo.lock

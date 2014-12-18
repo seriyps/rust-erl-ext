@@ -1,9 +1,8 @@
 extern crate erl_ext;
-extern crate glob;
 
 use erl_ext::{Encoder,Decoder};
 use std::io;
-use glob::glob;
+use std::io::fs;
 
 #[test]
 fn main() {
@@ -12,15 +11,19 @@ fn main() {
         Ok(_) => (),
         Err(ioerr) => {
             (writeln!(
-                io::stderr(),
+                &mut io::stderr(),
                 "{}:{} [warn] Failed to launch escript - '{}'. Is Erlang installed?",
                 file!(), line!(), ioerr)).unwrap();
             return
         }
     };
     // run decode-encode cycle and compare source and resulting binaries
-    for path in glob("tests/data/*.bin") {
-        let mut in_f = io::File::open(&path).unwrap();
+    let data_dir = Path::new("tests/data");
+    for path in (fs::readdir(&data_dir)
+                 .unwrap()
+                 .iter()
+                 .filter(|&p| p.extension() == Some(b"bin"))) {
+        let mut in_f = io::File::open(path).unwrap();
         let src = in_f.read_to_end().unwrap();
 
         let mut rdr = io::MemReader::new(src);

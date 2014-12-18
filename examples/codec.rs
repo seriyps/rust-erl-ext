@@ -14,9 +14,9 @@ fn main() {
         optflag("s", "small-atoms", "Use small atoms feature"),
         optflag("f", "fair-new-fun", "Fairly calculate NEW_FUN size (requires extra memory)"),
         ];
-    let matches = match getopts(args.tail(), opts) {
+    let matches = match getopts(args.tail(), opts.as_slice()) {
         Ok(m) => { m }
-        Err(f) => { fail!(f.to_string()) }
+        Err(f) => { panic!(f.to_string()) }
     };
     if matches.free.len() != 2 {
         println!("Usage: {} [opts] <in-file or '-'> <out-file or '-'>", args[0]);
@@ -46,14 +46,14 @@ fn main() {
         let mut decoder = Decoder::new(&mut rdr);
         match decoder.read_prelude() {
             Ok(false) =>
-                fail!("Invalid eterm!"),
+                panic!("Invalid eterm!"),
             Err(io::IoError{desc: d, ..}) =>
-                fail!("IoError: {}", d),
+                panic!("IoError: {}", d),
             _ => ()
         }
         let term = decoder.decode_term().unwrap();
         // print it to stderr
-        (write!(io::stderr(), "{}\n", term)).unwrap();
+        (write!(&mut io::stderr(), "{}\n", term)).unwrap();
         // and encode it
         let mut encoder = Encoder::new(&mut wrtr,
                                        matches.opt_present("u"),
@@ -67,7 +67,7 @@ fn main() {
 
     // compare original and encoded
     if wrtr.get_ref() != rdr.get_ref() {
-        (write!(io::stderr(), "Before and After isn't equal\n")).unwrap();
+        (write!(&mut io::stderr(), "Before and After isn't equal\n")).unwrap();
         os::set_exit_status(1);
         return
     }

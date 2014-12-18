@@ -6,7 +6,7 @@ otp_release:
    - 17.0
 
 install:
-  - curl http://www.rust-lang.org/rustup.sh | sudo sh -
+  - curl -sS https://static.rust-lang.org/rustup.sh | sudo bash
 
 script:
   - cargo build --verbose

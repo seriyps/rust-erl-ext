@@ -15,13 +15,13 @@ fn main() {
         optflag("s", "small-atoms", "Use small atoms feature"),
         optflag("f", "fair-new-fun", "Fairly calculate NEW_FUN size (requires extra memory)"),
         ];
-    let matches = match getopts(args.tail(), opts) {
+    let matches = match getopts(args.tail(), opts.as_slice()) {
         Ok(m) => { m }
-        Err(f) => { fail!(f.to_string()) }
+        Err(f) => { panic!(f.to_string()) }
     };
 
     let mut in_f = io::stdin();
-    let mut out_f = io::stdout().unwrap();
+    let mut out_f = io::stdout();
     // let mut out_writer = std::io::BufferedWriter::with_capacity(20480,
     //                                                             out_f.unwrap());
     let decoder = Decoder::new(&mut in_f);
@@ -31,8 +31,8 @@ fn main() {
                                    matches.opt_present("f"));
     match read_write_loop(decoder, encoder) {
         Err(io::IoError{kind: io::EndOfFile, ..}) => (), // port was closed
-        Err(io::IoError{kind: kind, desc: desc, ..}) =>
-            fail!("kind: {}, desc: '{}'", kind, desc),
+        Err(io::IoError{kind, desc, ..}) =>
+            panic!("kind: {}, desc: '{}'", kind, desc),
         Ok(()) => ()            // unreachable in this example
     };
 }
