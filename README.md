@@ -13,9 +13,10 @@ Decoding
 
 ```rust
 extern crate erl_ext;
+use erl_ext::Decoder;
 
 fn main() {
-    let mut decoder = erl_ext::Decoder(&mut io::stdin());
+    let mut decoder = Decoder::new(&mut io::stdin());
     assert!(true == decoder.read_prelude().unwrap());
     println!("{}", decoder.decode_term().unwrap());
 }
@@ -25,17 +26,18 @@ Encoding
 
 ```rust
 extern crate erl_ext;
+use erl_ext::{Eterm, Encoder};
 
 fn main() {
-    let term = erl_ext::List(vec!(erl_ext::SmallInteger(1),
-                                  erl_ext::Integer(1000000),
-                                  erl_ext::Nil));
+    let term = Eterm::List(vec!(Eterm::SmallInteger(1),
+                                Eterm::Integer(1000000),
+                                Eterm::Nil));
     // this combination of options make it compatible with erlang:term_to_binary/1
     let utf8_atoms = false;
     let small_atoms = false;
     let fair_new_fun = true;
-    let mut encoder = erl_ext::Encoder(&mut io::stdout(),
-                                       utf8_atoms, small_atoms, fair_new_fun);
+    let mut encoder = Encoder::new(&mut io::stdout(),
+                                   utf8_atoms, small_atoms, fair_new_fun);
     encoder.write_prelude();
     encoder.encode_term(term);
 }

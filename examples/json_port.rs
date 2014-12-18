@@ -1,8 +1,10 @@
 // see json_port.erl
 extern crate erl_ext;
 extern crate serialize;
+extern crate num;
 
 use erl_ext::Eterm;
+use num::bigint::ToBigInt;
 use serialize::json::{mod, Json};
 use std::io;
 
@@ -102,8 +104,18 @@ fn json_to_erl(json: json::Json) -> erl_ext::Eterm {
      */
     match json {
         Json::F64(num) => Eterm::Float(num),
-        Json::I64(num) => Eterm::Integer(num as i32), // FIXME: BigNum
-        Json::U64(num) => Eterm::Integer(num as i32), // FIXME: BigNum
+        Json::I64(num) => {
+            match num.to_i32() {
+                Some(i32_num) => Eterm::Integer(i32_num),
+                None => Eterm::BigNum(num.to_bigint().unwrap())
+            }
+        },
+        Json::U64(num) => {
+            match num.to_i32() {
+                Some(i32_num) => Eterm::Integer(i32_num),
+                None => Eterm::BigNum(num.to_bigint().unwrap())
+            }
+        },
         Json::String(string) => Eterm::Binary(string.into_bytes()),
         Json::Boolean(true) => Eterm::Atom(String::from_str("true")),
         Json::Boolean(false) => Eterm::Atom(String::from_str("false")),

@@ -17,6 +17,7 @@ main([PortPath]) ->
               binary]),
 
     run(Port, [<<"{\"array\": [1, -1, 0.1, {}, []], \"bool\": true,"
+                 "\"float\": 99.999, \"bigint\": -9999999999999, \"biguint\": 999999999999,"
                  " \"null\": null, \"str\": \"Hello, world!\"}">>,
                <<"{true: true}">>,
                <<255, 0>>,
