@@ -157,7 +157,7 @@ macro_rules! decode_some(
 )
 
 impl<'a> Decoder<'a> {
-    pub fn new<'a>(rdr: &'a mut io::Reader) -> Decoder<'a> {
+    pub fn new(rdr: &'a mut io::Reader) -> Decoder<'a> {
         Decoder{rdr: rdr}
     }
     pub fn read_prelude(&mut self) -> io::IoResult<bool> {
@@ -541,7 +541,7 @@ pub struct Encoder<'a> {
 impl<'a> Encoder<'a> {
     // TODO: asserts for overflows
 
-    pub fn new<'a>(writer: &'a mut io::Writer, utf8_atoms: bool, small_atoms: bool, fair_new_fun: bool) -> Encoder<'a> {
+    pub fn new(writer: &'a mut io::Writer, utf8_atoms: bool, small_atoms: bool, fair_new_fun: bool) -> Encoder<'a> {
         Encoder{wrtr: writer,
                 use_utf8_atoms: utf8_atoms,
                 use_small_atoms: small_atoms,
