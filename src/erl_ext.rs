@@ -154,7 +154,7 @@ macro_rules! decode_some(
             }
         }
         )
-)
+);
 
 impl<'a> Decoder<'a> {
     pub fn new(rdr: &'a mut io::Reader) -> Decoder<'a> {
@@ -183,7 +183,7 @@ impl<'a> Decoder<'a> {
     }
     fn decode_float(&mut self) -> DecodeResult {
         let float_str = try!(self._read_str(31));
-        match from_str::<f32>(float_str.as_slice()) {
+        match float_str.parse::<f32>() {
             Some(num) => Ok(Eterm::Float(num as f64)),
             _ =>
                 Err(io::IoError{
@@ -816,7 +816,7 @@ impl<'a> Encoder<'a> {
                     try!(self._encode_tag(ErlTermTag::SMALL_BIG_EXT));
                     self.encode_small_big(num, num_bytes)
                 } else {
-                    try!(self._encode_tag(ErlTermTag::LARGE_BIG_EXT))
+                    try!(self._encode_tag(ErlTermTag::LARGE_BIG_EXT));
                     self.encode_large_big(num, num_bytes)
                 }
             },
@@ -871,7 +871,7 @@ mod test {
                 assert_eq!(orig, teleported);
             }
         };
-    )
+    );
 
 
     #[test]
