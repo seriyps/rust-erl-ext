@@ -13,9 +13,9 @@ fn main() {
         return
     }
     let mut f = match args[1].as_slice() {
-        "-" => box io::stdin() as Box<io::Reader>,
+        "-" => Box::new(io::stdin()) as Box<io::Reader>,
         other =>
-            box io::File::open(&Path::new(other)).unwrap() as Box<io::Reader>
+            Box::new(io::File::open(&Path::new(other)).unwrap()) as Box<io::Reader>
     };
     let mut decoder = Decoder::new(&mut f);
     match decoder.read_prelude() {
@@ -26,5 +26,5 @@ fn main() {
         _ => ()
     }
     let term_opt = decoder.decode_term();
-    println!("{}", term_opt.unwrap());
+    println!("{:?}", term_opt.unwrap());
 }

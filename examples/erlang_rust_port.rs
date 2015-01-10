@@ -33,7 +33,7 @@ fn main() {
     match read_write_loop(decoder, encoder) {
         Err(io::IoError{kind: io::EndOfFile, ..}) => (), // port was closed
         Err(io::IoError{kind, desc, ..}) =>
-            panic!("kind: {}, desc: '{}'", kind, desc),
+            panic!("kind: {:?}, desc: '{}'", kind, desc),
         Ok(()) => ()            // unreachable in this example
     };
 }

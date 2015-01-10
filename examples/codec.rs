@@ -27,14 +27,14 @@ fn main() {
         return
     }
     let mut in_f = match matches.free[0].as_slice() {
-        "-" => box io::stdin() as Box<io::Reader>,
+        "-" => Box::new(io::stdin()) as Box<io::Reader>,
         other =>
-            box io::File::open(&Path::new(other)).unwrap() as Box<io::Reader>
+            Box::new(io::File::open(&Path::new(other)).unwrap()) as Box<io::Reader>
     };
     let mut out_f = match matches.free[1].as_slice() {
-        "-" => box io::stdout() as Box<io::Writer>,
+        "-" => Box::new(io::stdout()) as Box<io::Writer>,
         other =>
-            box io::File::create(&Path::new(other)).unwrap() as Box<io::Writer>
+            Box::new(io::File::create(&Path::new(other)).unwrap()) as Box<io::Writer>
     };
 
     let src = in_f.read_to_end().unwrap();
@@ -53,7 +53,7 @@ fn main() {
         }
         let term = decoder.decode_term().unwrap();
         // print it to stderr
-        (write!(&mut io::stderr(), "{}\n", term)).unwrap();
+        (write!(&mut io::stderr(), "{:?}\n", term)).unwrap();
         // and encode it
         let mut encoder = Encoder::new(&mut wrtr,
                                        matches.opt_present("u"),

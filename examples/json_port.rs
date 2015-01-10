@@ -5,7 +5,8 @@ extern crate num;
 
 use erl_ext::Eterm;
 use num::bigint::ToBigInt;
-use serialize::json::{mod, Json};
+use std::num::ToPrimitive;
+use serialize::json::{self, Json};
 use std::io;
 
 
@@ -15,7 +16,7 @@ fn main() {
     match read_write_loop(in_f, out_f) {
         Err(io::IoError{kind: io::EndOfFile, ..}) => (), // port was closed
         Err(io::IoError{kind, desc, ..}) =>
-            panic!("kind: {}, desc: '{}'", kind, desc),
+            panic!("kind: {:?}, desc: '{}'", kind, desc),
         Ok(()) => ()            // unreachable in this example
     };
 }
