@@ -7,7 +7,6 @@
 
 extern crate num;
 extern crate collections;
-extern crate serialize;
 
 use std::string::String;
 use std::vec::Vec;

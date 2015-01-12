@@ -1,9 +1,14 @@
 [package]
 
 name = "rust_erl_ext"
-version = "0.0.2"
+version = "0.1.1"
 authors = ["Sergey Prokhorov <me@seriyps.ru>"]
 
+description = "Erlang external term format codec."
+repository = "https://github.com/seriyps/rust-erl-ext"
+readme = "README.md"
+keywords = ["serialization", "encoding", "erlang", "bert", "term_to_binary"]
+license = "Apache-2.0"
 
 [lib]
 
@@ -11,6 +16,6 @@ name = "erl_ext"
 # path = "src/erl_ext.rs"
 
 
-[dependencies.num]
+[dependencies]
 
-git = "https://github.com/rust-lang/num.git"
+num = ">=0.1.8"
