@@ -1,24 +1,31 @@
 // See erts-6.1/doc/html/erl_ext_dist.html for binary format description.
 
-// #![crate_id = "erl_ext#0.0.1"]
 #![crate_type = "lib"]
 
 #![allow(non_camel_case_types)] // this is for enum ErlTermTag
+#![feature(core)]
+#![feature(convert)]
 
 extern crate num;
-extern crate collections;
+extern crate byteorder;
+extern crate core;
 
 use std::string::String;
 use std::vec::Vec;
-use std::num::{FromPrimitive, ToPrimitive};
 use std::io;
+use std::io::Read;
+use std::{error, fmt};
+use std::mem::transmute;
 
+use num::{FromPrimitive, ToPrimitive};
 use num::bigint;
 use num::{Signed, Zero};
 use num::integer::Integer;
+use core::num::ParseFloatError;
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 
-#[derive(FromPrimitive, Show, PartialEq, Copy)]
+#[derive(Debug, PartialEq)]
 pub enum ErlTermTag {
     // ATOM_CACHE_REF = 82,
     SMALL_INTEGER_EXT = 97,
@@ -48,7 +55,18 @@ pub enum ErlTermTag {
     SMALL_ATOM_UTF8_EXT = 119,
 }
 
-#[derive(Show, PartialEq, Clone)]
+// https://www.reddit.com/r/rust/comments/36pgn9/integer_to_enum_after_removal_of_fromprimitive/
+impl ErlTermTag {
+    fn from_u8(t: u8) -> Option<ErlTermTag> {
+        if t > 119 || t < 94 {
+            None
+        } else {
+            Some(unsafe { transmute(t) })
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Eterm {
     SmallInteger(u8),           // small_integer
     Integer(i32),               // integer
@@ -101,7 +119,7 @@ pub type Map = Vec<(Eterm, Eterm)>; // k-v pairs
 pub type List = Vec<Eterm>;
 
 
-#[derive(Show, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Pid {                // moved out from enum because it used in Eterm::{Fun,NewFun}
     node: Atom,
     id: u32,
@@ -109,31 +127,57 @@ pub struct Pid {                // moved out from enum because it used in Eterm:
     creation: u8,
 }
 
-
-// enum DecodeError {
-//     IoError(io::IoError),
-//     TagNotImplemented(u8, ErlTermTag),
-//     InvalidTag(u8),
-//     UnexpectedTerm(ErlTermTag,       // got
-//                    Vec<ErlTermTag>), // expected one of
-//     BadUTF8(Vec<u8>),
-//     BadFloat(Vec<u8>),
-// }
-
-pub type DecodeResult = io::IoResult<Eterm>;//, DecodeError>;
-
-pub struct Decoder<'a> {
-    rdr: &'a mut (io::Reader + 'a),
+#[derive(Debug)]
+pub enum Error {
+    UnexpectedTerm(ErlTermTag),     // expected other term inside container
+    UnknownTag(u8),                 // invalid term ID
+    ByteorderUnexpectedEOF,         // byteorder error
+    BadFloat(ParseFloatError), // invalid float, encoded as string
+    Io(io::Error),                  // io error
 }
 
-// macro_rules! try_io(
-//     ($e:expr) => (
-//         match $e {
-//             Ok(e) => e,
-//             Err(e) => return IoError(e)
-//         }
-//         )
-// )
+impl From<io::Error> for Error {
+    fn from (err: io::Error) -> Error { Error::Io(err) }
+}
+impl From<ParseFloatError> for Error {
+    fn from (err: ParseFloatError) -> Error { Error::BadFloat(err) }
+}
+impl From<byteorder::Error> for Error {
+    fn from (err: byteorder::Error) -> Error {
+        match err {
+            byteorder::Error::Io(ioe) => Error::Io(ioe),
+            byteorder::Error::UnexpectedEOF => Error::ByteorderUnexpectedEOF
+        }
+    }
+}
+impl error::Error for Error {
+    fn description(&self) -> &str {
+        match *self {
+            Error::BadFloat(_) => "Can't parse float, encoded as string",
+            Error::UnexpectedTerm(_) => "Expected other term as a part of other complex term",
+            Error::UnknownTag(_) => "Unknown term tag ID",
+            Error::ByteorderUnexpectedEOF => "Not enough bytes to parse multibyte value",
+            Error::Io(ref err) => error::Error::description(err),
+        }
+    }
+}
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Error::BadFloat(ref val) => write!(f, "Bad float '{}'.", val),
+            Error::UnexpectedTerm(ref val) => write!(f, "Got '{:?}', but expected other term", val),
+            Error::UnknownTag(ref val) => write!(f, "Unknown term tag ID: '{}'", val),
+            Error::ByteorderUnexpectedEOF => write!(f, "Not enough bytes to parse multibyte value"),
+            Error::Io(ref err) => err.fmt(f),
+        }
+    }
+}
+
+pub type DecodeResult = Result<Eterm, Error>;
+
+pub struct Decoder<'a, T: ?Sized + io::Read + 'a> {
+    rdr: &'a mut T,
+}
 
 macro_rules! decode_some(
     ($e:expr, $($t:path),+ ) => (
@@ -144,67 +188,50 @@ macro_rules! decode_some(
                         try!($e.decode_concrete_term($t)),
                     )+
                     bad =>
-                    return Err(io::IoError {
-                        kind: io::OtherIoError,
-                        desc: "Assertion failed, unexpected tag",
-                        detail: Some(format!("Got {:?}", bad)),
-                    })
+                    return Err(Error::UnexpectedTerm(bad))
             }
         }
         )
 );
 
-impl<'a> Decoder<'a> {
-    pub fn new(rdr: &'a mut io::Reader) -> Decoder<'a> {
+impl<'a, T> Decoder<'a, T> where T: io::Read + 'a {
+    pub fn new(rdr: &'a mut T) -> Decoder<'a, T> {
         Decoder{rdr: rdr}
     }
-    pub fn read_prelude(&mut self) -> io::IoResult<bool> {
+    pub fn read_prelude(&mut self) -> io::Result<bool> {
         Ok(131 == try!(self.rdr.read_u8()))
     }
     fn decode_small_integer(&mut self) -> DecodeResult {
         Ok(Eterm::SmallInteger(try!(self.rdr.read_u8())))
     }
     fn decode_integer(&mut self) -> DecodeResult {
-        Ok(Eterm::Integer(try!(self.rdr.read_be_i32())))
+        Ok(Eterm::Integer(try!(self.rdr.read_i32::<BigEndian>())))
     }
-    fn _read_str(&mut self, len: usize) -> io::IoResult<String> {
-        let utf8 = try!(self.rdr.read_exact(len));
-        match String::from_utf8(utf8) {
-            Ok(s) => Ok(s),
-            Err(_) =>
-                return Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Bad utf-8",
-                    detail: None
-                })
-        }
+    fn _read_exact(&mut self, len: u64) -> io::Result<Vec<u8>> {
+        let mut buf = Vec::with_capacity(len as usize);
+        try!(io::copy(&mut self.rdr.take(len), &mut buf));
+        Ok(buf)
+    }
+    fn _read_str(&mut self, len: usize) -> io::Result<String> {
+        let mut str_buf = String::with_capacity(len);
+        try!(self.rdr.take(len as u64).read_to_string(&mut str_buf));
+        Ok(str_buf)
     }
     fn decode_float(&mut self) -> DecodeResult {
         let float_str = try!(self._read_str(31));
-        match float_str.parse::<f32>() {
-            Some(num) => Ok(Eterm::Float(num as f64)),
-            _ =>
-                Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Bad float",
-                    detail: None // format!("{}", data)
-                })
-        }
+        let num = try!(float_str.parse::<f32>());
+        Ok(Eterm::Float(num as f64))
     }
     fn _decode_any_atom(&mut self) -> DecodeResult {
         match try!(self._decode_tag()) {
             ErlTermTag::ATOM_EXT | ErlTermTag::ATOM_UTF8_EXT => self.decode_atom(),
             ErlTermTag::SMALL_ATOM_EXT | ErlTermTag::SMALL_ATOM_UTF8_EXT => self.decode_small_atom(),
-            _ =>
-                return Err(io::IoError {
-                    kind: io::OtherIoError,
-                    desc: "Assertion failed, unexpected tag",
-                    detail: None
-                })
+            tag =>
+                Err(Error::UnexpectedTerm(tag))
         }
     }
     fn decode_atom(&mut self) -> DecodeResult {
-        let len = try!(self.rdr.read_be_u16());
+        let len = try!(self.rdr.read_u16::<BigEndian>());
         let atom_str = try!(self._read_str(len as usize));
         // XXX: data is in latin1 in case of ATOM_EXT
         Ok(Eterm::Atom(atom_str))
@@ -214,7 +241,7 @@ impl<'a> Decoder<'a> {
             Eterm::Atom(a) => a,
             _ => unreachable!()
         };
-        let id = try!(self.rdr.read_exact(4));
+        let id = try!(self._read_exact(4));
         let creation = try!(self.rdr.read_u8());
         Ok(Eterm::Reference {
             node: node,
@@ -227,7 +254,7 @@ impl<'a> Decoder<'a> {
             Eterm::Atom(a) => a,
             _ => unreachable!()
         };
-        let id = try!(self.rdr.read_be_u32());
+        let id = try!(self.rdr.read_u32::<BigEndian>());
         let creation = try!(self.rdr.read_u8());
         Ok(Eterm::Port {
             node: node,
@@ -240,8 +267,8 @@ impl<'a> Decoder<'a> {
             Eterm::Atom(a) => a,
             _ => unreachable!()
         };
-        let id = try!(self.rdr.read_be_u32());
-        let serial = try!(self.rdr.read_be_u32());
+        let id = try!(self.rdr.read_u32::<BigEndian>());
+        let serial = try!(self.rdr.read_u32::<BigEndian>());
         let creation = try!(self.rdr.read_u8());
         Ok(Eterm::Pid(Pid {
             node: node,
@@ -251,39 +278,39 @@ impl<'a> Decoder<'a> {
         }))
     }
 
-    fn _decode_small_tuple_arity(&mut self) -> io::IoResult<u8> {
+    fn _decode_small_tuple_arity(&mut self) -> byteorder::Result<u8> {
         self.rdr.read_u8()
     }
     fn decode_small_tuple(&mut self) -> DecodeResult {
         let arity = try!(self._decode_small_tuple_arity());
         let mut tuple: Tuple = Vec::with_capacity(arity as usize);
-        for _ in range(0, arity) {
+        for _ in 0..arity {
             let term = try!(self.decode_term());
             tuple.push(term)
         }
         Ok(Eterm::Tuple(tuple))
     }
 
-    fn _decode_large_tuple_arity(&mut self) -> io::IoResult<u32> {
-        self.rdr.read_be_u32()
+    fn _decode_large_tuple_arity(&mut self) -> byteorder::Result<u32> {
+        self.rdr.read_u32::<BigEndian>()
     }
     fn decode_large_tuple(&mut self) -> DecodeResult {
         let arity = try!(self._decode_large_tuple_arity());
         let mut tuple: Tuple = Vec::with_capacity(arity as usize);
-        for _ in range(0, arity) {
+        for _ in 0..arity {
             let term = try!(self.decode_term());
             tuple.push(term)
         }
         Ok(Eterm::Tuple(tuple))
     }
 
-    fn _decode_map_arity(&mut self) -> io::IoResult<u32> {
-        self.rdr.read_be_u32()
+    fn _decode_map_arity(&mut self) -> byteorder::Result<u32> {
+        self.rdr.read_u32::<BigEndian>()
     }
     fn decode_map(&mut self) -> DecodeResult {
         let arity: u32 = try!(self._decode_map_arity());
         let mut map: Map = Vec::with_capacity(arity as usize);
-        for _ in range(0, arity) {
+        for _ in 0..arity {
             let key = try!(self.decode_term());
             let val = try!(self.decode_term());
             map.push((key, val))
@@ -294,26 +321,26 @@ impl<'a> Decoder<'a> {
         Ok(Eterm::Nil)
     }
     fn decode_string(&mut self) -> DecodeResult {
-        let len = try!(self.rdr.read_be_u16());
-        Ok(Eterm::String(try!(self.rdr.read_exact(len as usize))))
+        let len = try!(self.rdr.read_u16::<BigEndian>());
+        Ok(Eterm::String(try!(self._read_exact(len as u64))))
     }
 
-    fn _decode_list_len(&mut self) -> io::IoResult<u32> {
-        self.rdr.read_be_u32()
+    fn _decode_list_len(&mut self) -> byteorder::Result<u32> {
+        self.rdr.read_u32::<BigEndian>()
     }
     fn decode_list(&mut self) -> DecodeResult {
         // XXX: should we push Nil as last element or may ignore it?
         let len = try!(self._decode_list_len()) + 1;
         let mut list = Vec::with_capacity(len as usize);
-        for _ in range(0, len) {
+        for _ in 0..len {
             let term = try!(self.decode_term());
             list.push(term)
         }
         Ok(Eterm::List(list))
     }
     fn decode_binary(&mut self) -> DecodeResult {
-        let len = try!(self.rdr.read_be_u32());
-        Ok(Eterm::Binary(try!(self.rdr.read_exact(len as usize))))
+        let len = try!(self.rdr.read_u32::<BigEndian>());
+        Ok(Eterm::Binary(try!(self._read_exact(len as u64))))
     }
     fn _decode_big(&mut self, n: usize) -> DecodeResult {
         let sign_int = try!(self.rdr.read_u8());
@@ -330,7 +357,7 @@ impl<'a> Decoder<'a> {
         // (a + b * BigDigit::base + c * BigDigit::base^2)
         let mut numbers = Vec::<u32>::with_capacity((n / 4) as usize);
         let mut cur_num: u32 = 0;
-        for i in range(0, n) {
+        for i in 0..n {
             let byte = try!(self.rdr.read_u8()) as u32;
             cur_num = match i % 4 {
                 0 => cur_num + byte,
@@ -352,17 +379,17 @@ impl<'a> Decoder<'a> {
         self._decode_big(n as usize)
     }
     fn decode_large_big(&mut self) -> DecodeResult {
-        let n = try!(self.rdr.read_be_u32());
+        let n = try!(self.rdr.read_u32::<BigEndian>());
         self._decode_big(n as usize)
     }
     fn decode_new_reference(&mut self) -> DecodeResult {
-        let len = try!(self.rdr.read_be_u16());
+        let len = try!(self.rdr.read_u16::<BigEndian>()) as u64;
         let node = match try!(self._decode_any_atom()) {
             Eterm::Atom(a) => a,
             _ => unreachable!()
         };
         let creation = try!(self.rdr.read_u8());
-        let id = try!(self.rdr.read_exact(4 * len as usize));
+        let id = try!(self._read_exact(4 * len));
         Ok(Eterm::Reference{
             node: node,
             id: id, // here id should be Vec<u32>, but since it's not interpreted, leave it as is
@@ -376,7 +403,7 @@ impl<'a> Decoder<'a> {
         Ok(Eterm::Atom(atom_str))
     }
     fn decode_fun(&mut self) -> DecodeResult {
-        let num_free = try!(self.rdr.read_be_u32());
+        let num_free = try!(self.rdr.read_u32::<BigEndian>());
         let pid = match decode_some!(self, ErlTermTag::PID_EXT) {
             Eterm::Pid(pid) => pid,
             _ => unreachable!()
@@ -396,7 +423,7 @@ impl<'a> Decoder<'a> {
             _ => unreachable!()
         };
         let mut free_vars = Vec::<Eterm>::with_capacity(num_free as usize);
-        for _ in range(0, num_free) {
+        for _ in 0..num_free {
             free_vars.push(try!(self.decode_term()));
         }
         Ok(Eterm::Fun {
@@ -408,11 +435,11 @@ impl<'a> Decoder<'a> {
         })
     }
     fn decode_new_fun(&mut self) -> DecodeResult {
-        let _size = try!(self.rdr.read_be_u32());
+        let _size = try!(self.rdr.read_u32::<BigEndian>());
         let arity = try!(self.rdr.read_u8());
-        let uniq = try!(self.rdr.read_exact(16));
-        let index = try!(self.rdr.read_be_u32());
-        let num_free = try!(self.rdr.read_be_u32());
+        let uniq = try!(self._read_exact(16));
+        let index = try!(self.rdr.read_u32::<BigEndian>());
+        let num_free = try!(self.rdr.read_u32::<BigEndian>());
 
         let module = match try!(self._decode_any_atom()) {
             Eterm::Atom(atom) => atom,
@@ -433,7 +460,7 @@ impl<'a> Decoder<'a> {
             _ => unreachable!()
         };
         let mut free_vars = Vec::<Eterm>::with_capacity(num_free as usize);
-        for _ in range(0, num_free) {
+        for _ in 0..num_free {
             free_vars.push(try!(self.decode_term()));
         }
         Ok(Eterm::NewFun {
@@ -467,29 +494,25 @@ impl<'a> Decoder<'a> {
         })
     }
     fn decode_bit_binary(&mut self) -> DecodeResult {
-        let len = try!(self.rdr.read_be_u32()) as usize;
+        let len = try!(self.rdr.read_u32::<BigEndian>());
         let bits = try!(self.rdr.read_u8());
         Ok(Eterm::BitBinary {
             bits: bits,
-            data: try!(self.rdr.read_exact(len)),
+            data: try!(self._read_exact(len as u64)),
         })
     }
     fn decode_new_float(&mut self) -> DecodeResult {
-        Ok(Eterm::Float(try!(self.rdr.read_be_f64())))
+        Ok(Eterm::Float(try!(self.rdr.read_f64::<BigEndian>())))
     }
 
 
-    fn _decode_tag(&mut self) -> io::IoResult<ErlTermTag> {
+    fn _decode_tag(&mut self) -> Result<ErlTermTag, Error> {
         let int_tag = try!(self.rdr.read_u8());
-        let tag: Option<ErlTermTag> = FromPrimitive::from_u8(int_tag);
+        let tag: Option<ErlTermTag> = ErlTermTag::from_u8(int_tag);
         match tag {
             Some(t) => Ok(t),
             None =>
-                Err(io::IoError{
-                    kind: io::OtherIoError,
-                    desc: "Invalid term type",
-                    detail: Some(format!("Tag: #{}", int_tag))
-                })
+                Err(Error::UnknownTag(int_tag))
         }
     }
     pub fn decode_term(&mut self) -> DecodeResult {
@@ -525,10 +548,10 @@ impl<'a> Decoder<'a> {
     }
 }
 
-pub type EncodeResult = io::IoResult<()>; // TODO: maybe return num bytes written?
+pub type EncodeResult = Result<(), Error>; // TODO: maybe return num bytes written?
 
 pub struct Encoder<'a> {
-    wrtr: &'a mut (io::Writer + 'a),
+    wrtr: &'a mut (io::Write + 'a),
     use_utf8_atoms: bool,
     use_small_atoms: bool,
     fair_new_fun: bool,
@@ -539,7 +562,7 @@ pub struct Encoder<'a> {
 impl<'a> Encoder<'a> {
     // TODO: asserts for overflows
 
-    pub fn new(writer: &'a mut io::Writer, utf8_atoms: bool, small_atoms: bool, fair_new_fun: bool) -> Encoder<'a> {
+    pub fn new(writer: &'a mut io::Write, utf8_atoms: bool, small_atoms: bool, fair_new_fun: bool) -> Encoder<'a> {
         Encoder{wrtr: writer,
                 use_utf8_atoms: utf8_atoms,
                 use_small_atoms: small_atoms,
@@ -547,24 +570,24 @@ impl<'a> Encoder<'a> {
     }
 
     pub fn write_prelude(&mut self) -> EncodeResult {
-        self.wrtr.write_u8(131)
+        self.wrtr.write_u8(131).map_err(From::from)
     }
 
     fn encode_small_integer(&mut self, num: u8) -> EncodeResult {
-        self.wrtr.write_u8(num)
+        self.wrtr.write_u8(num).map_err(From::from)
     }
     fn encode_integer(&mut self, num: i32) -> EncodeResult {
-        self.wrtr.write_be_i32(num)
+        self.wrtr.write_i32::<BigEndian>(num).map_err(From::from)
     }
     fn encode_new_float(&mut self, num: f64) -> EncodeResult {
-        self.wrtr.write_be_f64(num)
+        self.wrtr.write_f64::<BigEndian>(num).map_err(From::from)
     }
 
     fn _encode_str(&mut self, s: String) -> EncodeResult {
-        self.wrtr.write_str(s.as_slice())
+        self.wrtr.write_all(s.as_bytes()).map_err(From::from)
     }
     fn encode_atom(&mut self, atom: Atom) -> EncodeResult {
-        try!(self.wrtr.write_be_u16(atom.len() as u16));
+        try!(self.wrtr.write_u16::<BigEndian>(atom.len() as u16));
         self._encode_str(atom)
     }
     fn encode_small_atom(&mut self, atom: Atom) -> EncodeResult {
@@ -573,21 +596,21 @@ impl<'a> Encoder<'a> {
     }
     fn encode_new_reference(&mut self, node: Atom, id: Vec<u8>, creation: u8) -> EncodeResult {
         let len = id.len() / 4; // todo: ensure proper rounding, maybe (id.len() / 4) + if (id.len() % 4) == 0 {0} else {1}
-        try!(self.wrtr.write_be_u16(len as u16));
+        try!(self.wrtr.write_u16::<BigEndian>(len as u16));
         try!(self.encode_term(Eterm::Atom(node)));
         try!(self.wrtr.write_u8(creation));
-        self.wrtr.write(id.as_slice())
+        self.wrtr.write_all(id.as_slice()).map_err(From::from)
     }
     fn encode_port(&mut self, node: Atom, id: u32, creation: u8) -> EncodeResult {
         try!(self.encode_term(Eterm::Atom(node)));
-        try!(self.wrtr.write_be_u32(id));
-        self.wrtr.write_u8(creation)
+        try!(self.wrtr.write_u32::<BigEndian>(id));
+        self.wrtr.write_u8(creation).map_err(From::from)
     }
     fn encode_pid(&mut self, node: Atom, id: u32, serial: u32, creation: u8) -> EncodeResult {
         try!(self.encode_term(Eterm::Atom(node)));
-        try!(self.wrtr.write_be_u32(id));
-        try!(self.wrtr.write_be_u32(serial));
-        self.wrtr.write_u8(creation)
+        try!(self.wrtr.write_u32::<BigEndian>(id));
+        try!(self.wrtr.write_u32::<BigEndian>(serial));
+        self.wrtr.write_u8(creation).map_err(From::from)
     }
 
     fn encode_small_tuple(&mut self, tuple: Vec<Eterm>) -> EncodeResult {
@@ -598,14 +621,14 @@ impl<'a> Encoder<'a> {
         Ok(())
     }
     fn encode_large_tuple(&mut self, tuple: Vec<Eterm>) -> EncodeResult {
-        try!(self.wrtr.write_be_u32(tuple.len() as u32));
+        try!(self.wrtr.write_u32::<BigEndian>(tuple.len() as u32));
         for term in tuple.into_iter() {
             try!(self.encode_term(term));
         }
         Ok(())
     }
     fn encode_map(&mut self, map: Map) -> EncodeResult {
-        try!(self.wrtr.write_be_u32(map.len() as u32));
+        try!(self.wrtr.write_u32::<BigEndian>(map.len() as u32));
         for (key, val) in map.into_iter() {
             try!(self.encode_term(key));
             try!(self.encode_term(val));
@@ -613,11 +636,11 @@ impl<'a> Encoder<'a> {
         Ok(())
     }
     fn encode_string(&mut self, s: Vec<u8>) -> EncodeResult {
-        try!(self.wrtr.write_be_u16(s.len() as u16));
-        self.wrtr.write(s.as_slice())
+        try!(self.wrtr.write_u16::<BigEndian>(s.len() as u16));
+        self.wrtr.write_all(s.as_slice()).map_err(From::from)
     }
     fn encode_list(&mut self, list: Vec<Eterm>) -> EncodeResult {
-        try!(self.wrtr.write_be_u32((list.len() - 1) as u32));
+        try!(self.wrtr.write_u32::<BigEndian>((list.len() - 1) as u32));
         for term in list.into_iter() {
             try!(self.encode_term(term));
         }
@@ -625,8 +648,8 @@ impl<'a> Encoder<'a> {
     }
 
     fn encode_binary(&mut self, bin: Vec<u8>) -> EncodeResult {
-        try!(self.wrtr.write_be_u32(bin.len() as u32));
-        self.wrtr.write(bin.as_slice())
+        try!(self.wrtr.write_u32::<BigEndian>(bin.len() as u32));
+        self.wrtr.write_all(bin.as_slice()).map_err(From::from)
     }
 
     fn _bigint_to_bytes(&self, num: bigint::BigInt) -> Vec<u8> {
@@ -650,19 +673,19 @@ impl<'a> Encoder<'a> {
             1
         };
         try!(self.wrtr.write_u8(sign));
-        self.wrtr.write(bytes.as_slice())
+        self.wrtr.write_all(bytes.as_slice()).map_err(From::from)
     }
     fn encode_small_big(&mut self, num: bigint::BigInt, bytes: Vec<u8>) -> EncodeResult {
         try!(self.wrtr.write_u8(bytes.len() as u8));
         self._encode_big(num, bytes)
     }
     fn encode_large_big(&mut self, num: bigint::BigInt, bytes: Vec<u8>) -> EncodeResult {
-        try!(self.wrtr.write_be_u32(bytes.len() as u32));
+        try!(self.wrtr.write_u32::<BigEndian>(bytes.len() as u32));
         self._encode_big(num, bytes)
     }
 
     fn encode_fun(&mut self, pid: Pid, module: Atom, index: u32, uniq: u32, free_vars: Vec<Eterm>) -> EncodeResult {
-        try!(self.wrtr.write_be_u32(free_vars.len() as u32));
+        try!(self.wrtr.write_u32::<BigEndian>(free_vars.len() as u32));
         try!(self.encode_term(Eterm::Pid(pid)));
         try!(self.encode_term(Eterm::Atom(module)));
         try!(self.encode_term(
@@ -679,9 +702,9 @@ impl<'a> Encoder<'a> {
     fn _encode_new_fun(&mut self, arity: u8, uniq: Vec<u8>, index: u32, module: Atom, old_index: u32, old_uniq: u32, pid: Pid, free_vars: Vec<Eterm>) -> EncodeResult {
         try!(self.wrtr.write_u8(arity));
         assert!(uniq.len() == 16);
-        try!(self.wrtr.write(uniq.as_slice()));
-        try!(self.wrtr.write_be_u32(index));
-        try!(self.wrtr.write_be_u32(free_vars.len() as u32));
+        try!(self.wrtr.write_all(uniq.as_slice()));
+        try!(self.wrtr.write_u32::<BigEndian>(index));
+        try!(self.wrtr.write_u32::<BigEndian>(free_vars.len() as u32));
         try!(self.encode_term(Eterm::Atom(module)));
 
         let old_index_term = if old_index <= 255 {
@@ -713,18 +736,18 @@ impl<'a> Encoder<'a> {
         // So, we make this configurable: do fair encoding or cheating with
         // fake zero size.
         if self.fair_new_fun {
-            let mut temp = io::MemWriter::new();
+            let mut temp = Vec::new();
             {
                 let mut encoder = Encoder::new(&mut temp, self.use_utf8_atoms, self.use_small_atoms, self.fair_new_fun);
                 try!(encoder._encode_new_fun(arity, uniq, index, module, old_index, old_uniq, pid, free_vars));
             }
-            let size = temp.get_ref().len();
+            let size = temp.len();
             // +4 is size itself
-            try!(self.wrtr.write_be_u32(4 + size as u32));
-            self.wrtr.write(temp.get_ref())
+            try!(self.wrtr.write_u32::<BigEndian>(4 + size as u32));
+            self.wrtr.write_all(temp.as_slice()).map_err(From::from)
         } else {
             // cheating - write 0, since binary_to_term don't use this (at least now, in 17.0)
-            try!(self.wrtr.write_be_u32(0));
+            try!(self.wrtr.write_u32::<BigEndian>(0));
             self._encode_new_fun(arity, uniq, index, module, old_index, old_uniq, pid, free_vars)
         }
     }
@@ -734,14 +757,14 @@ impl<'a> Encoder<'a> {
         self.encode_term(Eterm::SmallInteger(arity))
     }
     fn encode_bit_binary(&mut self, bits: u8, data: Vec<u8>) -> EncodeResult {
-        try!(self.wrtr.write_be_u32(data.len() as u32));
+        try!(self.wrtr.write_u32::<BigEndian>(data.len() as u32));
         try!(self.wrtr.write_u8(bits));
-        self.wrtr.write(data.as_slice())
+        self.wrtr.write_all(data.as_slice()).map_err(From::from)
     }
 
     fn _encode_tag(&mut self, tag: ErlTermTag) -> EncodeResult {
         let int_tag = tag as u8;
-        self.wrtr.write_u8(int_tag)
+        self.wrtr.write_u8(int_tag).map_err(From::from)
     }
     pub fn encode_term(&mut self, term: Eterm) -> EncodeResult {
         // XXX: maybe use &Eterm, not just Eterm?
@@ -846,8 +869,8 @@ mod test {
     use std::iter::FromIterator;
     use num::bigint;
 
-    fn term_to_binary(term: Eterm) -> io::IoResult<Vec<u8>> {
-        let mut writer = io::MemWriter::new();
+    fn term_to_binary(term: Eterm) -> io::Result<Vec<u8>> {
+        let mut writer = Vec::new();
         {
             let mut encoder = Encoder::new(&mut writer, false, false, true);
             try!(encoder.write_prelude());
@@ -955,7 +978,7 @@ mod test {
     #[test]
     fn codec_string() {
         // Vec::from_fn(255, |i| i as u8);
-        let vec: Vec<u8> = FromIterator::from_iter(range(0, 255 as u8));
+        let vec: Vec<u8> = FromIterator::from_iter(0..(255 as u8));
         codec_eq!(super::Eterm::String(vec));
     }
 
@@ -972,7 +995,7 @@ mod test {
     fn codec_binary() {
         // Vec::from_fn(1024, |i| (i % 255) as u8)
         let mut vec: Vec<u8> = Vec::with_capacity(1024);
-        for i in range(0, 1024) {
+        for i in 0..1024 {
             vec.push(i % 255 as u8);
         }
         codec_eq!(super::Eterm::Binary(vec));
@@ -983,7 +1006,7 @@ mod test {
         codec_eq!(super::Eterm::BigNum(bigint::BigInt::new(bigint::Sign::Plus, vec!(1, 1, 1, 1, 1, 1))));
         codec_eq!(super::Eterm::BigNum(bigint::BigInt::new(bigint::Sign::Minus, vec!(1, 1, 1, 1, 1, 1))));
         codec_eq!(super::Eterm::BigNum(FromPrimitive::from_i64(Int::max_value()).unwrap()));
-        let vec: Vec<u32> = FromIterator::from_iter(range(0, 256 as u32));
+        let vec: Vec<u32> = FromIterator::from_iter(0..(256 as u32));
         codec_eq!(super::Eterm::BigNum(bigint::BigInt::new(bigint::Sign::Plus, vec)));
     }
 
@@ -1012,7 +1035,7 @@ mod test {
             serial: 1,
             creation: 0
         };
-        let vec: Vec<u8> = FromIterator::from_iter(range(0, 16 as u8));
+        let vec: Vec<u8> = FromIterator::from_iter(0..(16 as u8));
         codec_eq!(super::Eterm::NewFun {
             arity: 128,         // :-)
             uniq: vec, //Vec::from_fn(16, |i| i as u8),
