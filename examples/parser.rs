@@ -1,28 +1,34 @@
+#![feature(exit_status)]
+#![feature(core)]
+
 extern crate erl_ext;
+extern crate core;
+
+use std::convert::AsRef;
 
 use erl_ext::Decoder;
 use std::io;
-use std::os;
-
+use std::env;
+use std::fs;
 
 fn main() {
-    let args = os::args();
+    let mut args = env::args();
     if args.len() < 2 {
         println!("Usage: parser <filename or '-'>");
-        os::set_exit_status(1);
+        env::set_exit_status(1);
         return
     }
-    let mut f = match args[1].as_slice() {
-        "-" => Box::new(io::stdin()) as Box<io::Reader>,
+    let mut f = match args.nth(1).unwrap().as_ref() {
+        "-" => Box::new(io::stdin()) as Box<io::Read>,
         other =>
-            Box::new(io::File::open(&Path::new(other)).unwrap()) as Box<io::Reader>
+            Box::new(fs::File::open(other).unwrap()) as Box<io::Read>,
     };
     let mut decoder = Decoder::new(&mut f);
     match decoder.read_prelude() {
         Ok(false) =>
             panic!("Invalid eterm!"),
-        Err(io::IoError{desc: d, ..}) =>
-            panic!("IoError: {}", d),
+        Err(err) =>
+            panic!("IoError: {}", err),
         _ => ()
     }
     let term_opt = decoder.decode_term();

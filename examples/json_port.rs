@@ -1,30 +1,39 @@
 // see json_port.erl
+#![feature(rustc_private)]
+#![feature(collections)]
+#![feature(convert)]
 extern crate erl_ext;
 extern crate serialize;
 extern crate num;
+extern crate byteorder;
 
-use erl_ext::Eterm;
-use num::bigint::ToBigInt;
-use std::num::ToPrimitive;
-use serialize::json::{self, Json};
+// use std::num::ToPrimitive;
 use std::io;
+
+use num::bigint::ToBigInt;
+use num::traits::FromPrimitive;
+use num::traits::ToPrimitive;
+use serialize::json::{self, Json}; // TODO: use rustc-serialize
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+
+use erl_ext::{Eterm, Error};
 
 
 fn main() {
     let in_f = io::stdin();
     let out_f = io::stdout();
     match read_write_loop(in_f, out_f) {
-        Err(io::IoError{kind: io::EndOfFile, ..}) => (), // port was closed
-        Err(io::IoError{kind, desc, ..}) =>
-            panic!("kind: {:?}, desc: '{}'", kind, desc),
+        Err(Error::ByteorderUnexpectedEOF) => (), // port was closed
+        Err(ref err) =>
+            panic!("Error: '{:?}'", err),
         Ok(()) => ()            // unreachable in this example
     };
 }
 
-fn read_write_loop<R: io::Reader, W: io::Writer>(mut r: R, mut w: W) -> io::IoResult<()> {
+fn read_write_loop<R: io::Read, W: io::Write>(mut r: R, mut w: W) -> Result<(), Error> {
     loop {
         // {packet, 2}
-        let _in_packet_size = r.read_be_u16();
+        let _in_packet_size = r.read_u16::<BigEndian>();
         {
             let mut decoder = erl_ext::Decoder::new(&mut r);
             assert!(true == try!(decoder.read_prelude()));
@@ -42,7 +51,8 @@ fn read_write_loop<R: io::Reader, W: io::Writer>(mut r: R, mut w: W) -> io::IoRe
                         ))
             };
             // Temp buffer to calculate response term size
-            let mut wrtr = io::MemWriter::new();
+            let dest = Vec::new();
+            let mut wrtr = io::BufWriter::new(dest);
             {
                 // encode response term
                 let mut encoder = erl_ext::Encoder::new(&mut wrtr,
@@ -52,7 +62,7 @@ fn read_write_loop<R: io::Reader, W: io::Writer>(mut r: R, mut w: W) -> io::IoRe
             }
             // response packet size
             let out_packet_size = wrtr.get_ref().len() as u16;
-            try!(w.write_be_u16(out_packet_size));
+            try!(w.write_u16::<BigEndian>(out_packet_size));
             // response term itself
             try!(w.write(wrtr.get_ref()));
             try!(w.flush());
@@ -70,7 +80,7 @@ fn bytes_to_json(json_bytes: Vec<u8>) -> erl_ext::Eterm {
                 Eterm::Atom(String::from_str("bad_utf8"))))
     };
     // &str to json::Json
-    let json_obj = match json::from_str(json_string.as_slice()) {
+    let json_obj = match json::from_str(json_string.as_str()) {
         Ok(o) => o,
         Err(json::ParserError::SyntaxError(err_code, _, _)) => {
             let err_str = json::error_str(err_code);
@@ -105,16 +115,14 @@ fn json_to_erl(json: json::Json) -> erl_ext::Eterm {
      */
     match json {
         Json::F64(num) => Eterm::Float(num),
-        Json::I64(num) => {
-            match num.to_i32() {
-                Some(i32_num) => Eterm::Integer(i32_num),
-                None => Eterm::BigNum(num.to_bigint().unwrap())
-            }
-        },
+        Json::I64(num) if (num <= (i32::max_value() as i64) && num >= (i32::min_value() as i64)) =>
+            Eterm::Integer(num as i32),
+        Json::I64(num) =>
+            Eterm::BigNum(num.to_bigint().unwrap()),
         Json::U64(num) => {
             match num.to_i32() {
                 Some(i32_num) => Eterm::Integer(i32_num),
-                None => Eterm::BigNum(num.to_bigint().unwrap())
+                None => Eterm::BigNum(FromPrimitive::from_u64(num).unwrap())
             }
         },
         Json::String(string) => Eterm::Binary(string.into_bytes()),

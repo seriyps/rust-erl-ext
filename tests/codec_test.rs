@@ -1,13 +1,17 @@
+#![feature(convert)]
 extern crate erl_ext;
 
 use erl_ext::{Encoder,Decoder};
 use std::io;
-use std::io::fs;
+use std::io::{Write,Read};
+use std::fs;
+use std::process;
+use std::path::Path;
 
 #[test]
 fn main() {
     // generate tests/data/*.bin
-    match io::Command::new("escript").arg("tests/term_gen.erl").spawn() {
+    match process::Command::new("escript").arg("tests/term_gen.erl").spawn() {
         Ok(_) => (),
         Err(ioerr) => {
             (writeln!(
@@ -19,15 +23,19 @@ fn main() {
     };
     // run decode-encode cycle and compare source and resulting binaries
     let data_dir = Path::new("tests/data");
-    for path in (fs::readdir(&data_dir)
+    for path in (fs::read_dir(&data_dir)
                  .unwrap()
-                 .iter()
-                 .filter(|&p| p.extension() == Some(b"bin"))) {
-        let mut in_f = io::File::open(path).unwrap();
-        let src = in_f.read_to_end().unwrap();
+                 .map(|de| de.unwrap().path())
+                 .filter(|ref p| p.extension().unwrap().to_str() == Some("bin"))) {
 
-        let mut rdr = io::MemReader::new(src);
-        let mut wrtr = io::MemWriter::new();
+        let mut in_f = fs::File::open(&path).unwrap();
+        let mut src = Vec::new();
+        in_f.read_to_end(&mut src).unwrap();
+        let mut rdr = io::BufReader::new(src.as_slice());
+
+        let dest = Vec::new();
+        let mut wrtr = io::BufWriter::new(dest);
+
         {
             let mut decoder = Decoder::new(&mut rdr);
             assert!(true == decoder.read_prelude().unwrap(),

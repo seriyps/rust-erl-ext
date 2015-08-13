@@ -1,19 +1,28 @@
+#![feature(exit_status)]
+#![feature(rustc_private)]
+#![feature(convert)]
+#![feature(core)]
+#![feature(collections)]
 extern crate erl_ext;
 extern crate getopts;
+extern crate core;
 
 use getopts::{optflag,getopts};
 use erl_ext::{Decoder,Encoder};
+use core::array::FixedSizeArray;
+use std::io::Write;
 use std::io;
-use std::os;
-
+use std::env;
+use std::fs;
 
 fn main() {
-    let args = os::args();
+    let args: Vec<String> = env::args().collect();
     let opts = [
         optflag("u", "utf8-atoms", "Use utf-8 atoms feature"),
         optflag("s", "small-atoms", "Use small atoms feature"),
         optflag("f", "fair-new-fun", "Fairly calculate NEW_FUN size (requires extra memory)"),
         ];
+    // skip(1)
     let matches = match getopts(args.tail(), opts.as_slice()) {
         Ok(m) => { m }
         Err(f) => { panic!(f.to_string()) }
@@ -23,32 +32,34 @@ fn main() {
         for o in opts.iter() {
             println!("-{}\t--{}\t{}", o.short_name, o.long_name, o.desc);
         }
-        os::set_exit_status(1);
+        env::set_exit_status(1);
         return
     }
-    let mut in_f = match matches.free[0].as_slice() {
-        "-" => Box::new(io::stdin()) as Box<io::Reader>,
+    let mut in_f = match matches.free[0].as_ref() {
+        "-" => Box::new(io::stdin()) as Box<io::Read>,
         other =>
-            Box::new(io::File::open(&Path::new(other)).unwrap()) as Box<io::Reader>
+            Box::new(fs::File::open(other).unwrap()) as Box<io::Read>
     };
-    let mut out_f = match matches.free[1].as_slice() {
-        "-" => Box::new(io::stdout()) as Box<io::Writer>,
+    let mut out_f = match matches.free[1].as_ref() {
+        "-" => Box::new(io::stdout()) as Box<io::Write>,
         other =>
-            Box::new(io::File::create(&Path::new(other)).unwrap()) as Box<io::Writer>
+            Box::new(fs::File::create(other).unwrap()) as Box<io::Write>
     };
 
-    let src = in_f.read_to_end().unwrap();
+    let mut src = Vec::new();
+    in_f.read_to_end(&mut src).unwrap();
+    let dest = Vec::new();
 
-    let mut rdr = io::MemReader::new(src);
-    let mut wrtr = io::MemWriter::new();
+    let mut rdr = io::BufReader::new(src.as_slice());
+    let mut wrtr = io::BufWriter::new(dest);
     {
         // decode term
         let mut decoder = Decoder::new(&mut rdr);
         match decoder.read_prelude() {
             Ok(false) =>
                 panic!("Invalid eterm!"),
-            Err(io::IoError{desc: d, ..}) =>
-                panic!("IoError: {}", d),
+            Err(e) =>
+                panic!("DecodeError: {}", e),
             _ => ()
         }
         let term = decoder.decode_term().unwrap();
@@ -68,7 +79,7 @@ fn main() {
     // compare original and encoded
     if wrtr.get_ref() != rdr.get_ref() {
         (write!(&mut io::stderr(), "Before and After isn't equal\n")).unwrap();
-        os::set_exit_status(1);
+        env::set_exit_status(1);
         return
     }
 }

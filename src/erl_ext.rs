@@ -6,6 +6,9 @@
 #![feature(core)]
 #![feature(convert)]
 
+#![allow(unused_features)]
+#![feature(collections)]        // for tests
+
 extern crate num;
 extern crate byteorder;
 extern crate core;
@@ -58,10 +61,10 @@ pub enum ErlTermTag {
 // https://www.reddit.com/r/rust/comments/36pgn9/integer_to_enum_after_removal_of_fromprimitive/
 impl ErlTermTag {
     fn from_u8(t: u8) -> Option<ErlTermTag> {
-        if t > 119 || t < 94 {
-            None
-        } else {
+        if (t <= 119 && t >= 94) || (t == 77) || (t == 70) {
             Some(unsafe { transmute(t) })
+        } else {
+            None
         }
     }
 }
@@ -863,23 +866,23 @@ impl<'a> Encoder<'a> {
 
 #[cfg(test)]
 mod test {
-    use super::{Eterm,Encoder,Decoder,DecodeResult};
+    use super::{Eterm,Encoder,Decoder,DecodeResult,Error};
     use std::io;
-    use std::num::{Int, FromPrimitive};
     use std::iter::FromIterator;
     use num::bigint;
+    use num::traits::FromPrimitive;
 
-    fn term_to_binary(term: Eterm) -> io::Result<Vec<u8>> {
+    fn term_to_binary(term: Eterm) -> Result<Vec<u8>, Error> {
         let mut writer = Vec::new();
         {
             let mut encoder = Encoder::new(&mut writer, false, false, true);
             try!(encoder.write_prelude());
             try!(encoder.encode_term(term));
         }
-        Ok(writer.into_inner())
+        Ok(writer)
     }
     fn binary_to_term(binary: Vec<u8>) -> DecodeResult {
-        let mut reader = io::MemReader::new(binary);
+        let mut reader = io::BufReader::new(binary.as_slice());
         let mut decoder = Decoder::new(&mut reader);
         assert!(true == try!(decoder.read_prelude()));
         decoder.decode_term()
@@ -996,7 +999,7 @@ mod test {
         // Vec::from_fn(1024, |i| (i % 255) as u8)
         let mut vec: Vec<u8> = Vec::with_capacity(1024);
         for i in 0..1024 {
-            vec.push(i % 255 as u8);
+            vec.push((i % 255) as u8);
         }
         codec_eq!(super::Eterm::Binary(vec));
     }
@@ -1005,7 +1008,7 @@ mod test {
     fn codec_big_num() {
         codec_eq!(super::Eterm::BigNum(bigint::BigInt::new(bigint::Sign::Plus, vec!(1, 1, 1, 1, 1, 1))));
         codec_eq!(super::Eterm::BigNum(bigint::BigInt::new(bigint::Sign::Minus, vec!(1, 1, 1, 1, 1, 1))));
-        codec_eq!(super::Eterm::BigNum(FromPrimitive::from_i64(Int::max_value()).unwrap()));
+        codec_eq!(super::Eterm::BigNum(FromPrimitive::from_i64(i64::max_value()).unwrap()));
         let vec: Vec<u32> = FromIterator::from_iter(0..(256 as u32));
         codec_eq!(super::Eterm::BigNum(bigint::BigInt::new(bigint::Sign::Plus, vec)));
     }
@@ -1022,7 +1025,7 @@ mod test {
             pid: pid,
             module: String::from_str("my_mod"),
             index: 1,
-            uniq: Int::max_value(),
+            uniq: u32::max_value(),
             free_vars: vec!(super::Eterm::Nil)
         });
     }
@@ -1031,7 +1034,7 @@ mod test {
     fn codec_new_fun() {
         let pid = super::Pid {
             node: String::from_str("my_node"),
-            id: Int::max_value(),
+            id: u32::max_value(),
             serial: 1,
             creation: 0
         };
@@ -1039,10 +1042,10 @@ mod test {
         codec_eq!(super::Eterm::NewFun {
             arity: 128,         // :-)
             uniq: vec, //Vec::from_fn(16, |i| i as u8),
-            index: Int::max_value(),
+            index: u32::max_value(),
             module: String::from_str("my_mod"),
-            old_index: Int::max_value(),
-            old_uniq: Int::max_value(),
+            old_index: u32::max_value(),
+            old_uniq: u32::max_value(),
             pid: pid,
             free_vars: vec!(super::Eterm::Nil)
         });
@@ -1053,7 +1056,7 @@ mod test {
         codec_eq!(super::Eterm::Export {
             module: String::from_str("my_mod"),
             function: String::from_str("my_fun"),
-            arity: Int::max_value()
+            arity: u8::max_value()
         });
     }
 

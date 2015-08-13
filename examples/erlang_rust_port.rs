@@ -1,16 +1,22 @@
 // see erlang_rust_port.erl
+#![feature(rustc_private)]
+#![feature(core)]
+#![feature(collections)]
+
 extern crate erl_ext;
 extern crate getopts;
+extern crate core;
 
 use getopts::{optflag,getopts};
-use erl_ext::{Decoder,Encoder};
+use erl_ext::{Decoder,Encoder,Error};
+use core::array::FixedSizeArray;
+
 use std::io;
-use std::io::stdio;
-use std::os;
+use std::env;
 
 
 fn main() {
-    let args = os::args();
+    let args: Vec<String> = env::args().collect();
     let opts = [
         optflag("u", "utf8-atoms", "Use utf-8 atoms feature"),
         optflag("s", "small-atoms", "Use small atoms feature"),
@@ -21,8 +27,8 @@ fn main() {
         Err(f) => { panic!(f.to_string()) }
     };
 
-    let mut in_f = stdio::stdin_raw();
-    let mut out_f = stdio::stdout_raw();
+    let mut in_f = io::stdin();
+    let mut out_f = io::stdout();
     // let mut out_writer = std::io::BufferedWriter::with_capacity(20480,
     //                                                             out_f.unwrap());
     let decoder = Decoder::new(&mut in_f);
@@ -31,14 +37,14 @@ fn main() {
                                    matches.opt_present("s"),
                                    matches.opt_present("f"));
     match read_write_loop(decoder, encoder) {
-        Err(io::IoError{kind: io::EndOfFile, ..}) => (), // port was closed
-        Err(io::IoError{kind, desc, ..}) =>
-            panic!("kind: {:?}, desc: '{}'", kind, desc),
+        Err(Error::ByteorderUnexpectedEOF) => (), // port was closed
+        Err(ref err) =>
+            panic!("Error: {:?}", err),
         Ok(()) => ()            // unreachable in this example
     };
 }
 
-fn read_write_loop(mut decoder: Decoder, mut encoder: Encoder) -> io::IoResult<()> {
+fn read_write_loop<R: io::Read>(mut decoder: Decoder<R>, mut encoder: Encoder) -> Result<(), Error> {
     loop {
         assert!(true == try!(decoder.read_prelude()));
         let term = try!(decoder.decode_term());
