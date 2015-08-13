@@ -1,7 +1,6 @@
 // see json_port.erl
 #![feature(rustc_private)]
-#![feature(collections)]
-#![feature(convert)]
+
 extern crate erl_ext;
 extern crate serialize;
 extern crate num;
@@ -47,8 +46,8 @@ fn read_write_loop<R: io::Read, W: io::Write>(mut r: R, mut w: W) -> Result<(), 
                 _ =>
                     // {error, not_binary}
                     Eterm::Tuple(vec!(
-                        Eterm::Atom(String::from_str("error")),
-                        Eterm::Atom(String::from_str("not_binary"))
+                        Eterm::Atom(String::from("error")),
+                        Eterm::Atom(String::from("not_binary"))
                         ))
             };
             // Temp buffer to calculate response term size
@@ -65,7 +64,7 @@ fn read_write_loop<R: io::Read, W: io::Write>(mut r: R, mut w: W) -> Result<(), 
             let out_packet_size = wrtr.len() as u16;
             try!(w.write_u16::<BigEndian>(out_packet_size));
             // response term itself
-            try!(w.write(wrtr.as_slice()));
+            try!(w.write_all(wrtr.as_ref()));
             try!(w.flush());
         }
     }
@@ -77,27 +76,27 @@ fn bytes_to_json(json_bytes: Vec<u8>) -> erl_ext::Eterm {
         Ok(s) => s,
         Err(_) =>
             return Eterm::Tuple(vec!(
-                Eterm::Atom(String::from_str("error")),
-                Eterm::Atom(String::from_str("bad_utf8"))))
+                Eterm::Atom(String::from("error")),
+                Eterm::Atom(String::from("bad_utf8"))))
     };
     // &str to json::Json
-    let json_obj = match json::from_str(json_string.as_str()) {
+    let json_obj = match json::from_str(json_string.as_ref()) {
         Ok(o) => o,
         Err(json::ParserError::SyntaxError(err_code, _, _)) => {
             let err_str = json::error_str(err_code);
             return Eterm::Tuple(vec!(
-                Eterm::Atom(String::from_str("error")),
+                Eterm::Atom(String::from("error")),
                 Eterm::String(err_str.as_bytes().to_vec())
                     ))
         },
         Err(json::ParserError::IoError(_, err_str)) =>
             return Eterm::Tuple(vec!(
-                Eterm::Atom(String::from_str("error")),
+                Eterm::Atom(String::from("error")),
                 Eterm::String(err_str.as_bytes().to_vec())
                     ))
     };
     // json::Json to erl_ext::Eterm
-    Eterm::Tuple(vec!(Eterm::Atom(String::from_str("ok")), json_to_erl(json_obj)))
+    Eterm::Tuple(vec!(Eterm::Atom(String::from("ok")), json_to_erl(json_obj)))
 }
 
 fn json_to_erl(json: json::Json) -> erl_ext::Eterm {
@@ -127,8 +126,8 @@ fn json_to_erl(json: json::Json) -> erl_ext::Eterm {
             }
         },
         Json::String(string) => Eterm::Binary(string.into_bytes()),
-        Json::Boolean(true) => Eterm::Atom(String::from_str("true")),
-        Json::Boolean(false) => Eterm::Atom(String::from_str("false")),
+        Json::Boolean(true) => Eterm::Atom(String::from("true")),
+        Json::Boolean(false) => Eterm::Atom(String::from("false")),
         Json::Array(lst) => {
             let mut eterm_lst: erl_ext::List =
                 lst.into_iter().map(json_to_erl).collect();
@@ -145,6 +144,6 @@ fn json_to_erl(json: json::Json) -> erl_ext::Eterm {
                     }).collect();
             Eterm::Map(eterm_map)
         },
-        Json::Null => Eterm::Atom(String::from_str("undefined")),
+        Json::Null => Eterm::Atom(String::from("undefined")),
     }
 }
