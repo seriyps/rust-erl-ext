@@ -18,10 +18,8 @@ use std::io::Read;
 use std::{error, fmt};
 use std::mem::transmute;
 
-use num::{FromPrimitive, ToPrimitive};
+use num::FromPrimitive;
 use num::bigint;
-use num::{Signed, Zero};
-use num::integer::Integer;
 use std::num::ParseFloatError;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
@@ -356,30 +354,8 @@ impl<'a, T> Decoder<'a, T> where T: io::Read + 'a {
         } else {
             bigint::Sign::Minus
         };
-        // In erlang:
-        // B = 256 % base is 2^8
-        // (d0*B^0 + d1*B^1 + d2*B^2 + ... d(N-1)*B^(n-1))
-        // In rust:
-        // BigDigit::base is 2^32
-        // (a + b * BigDigit::base + c * BigDigit::base^2)
-        let mut numbers = Vec::<u32>::with_capacity((n / 4) as usize);
-        let mut cur_num: u32 = 0;
-        for i in 0..n {
-            let byte = try!(self.rdr.read_u8()) as u32;
-            cur_num = match i % 4 {
-                0 => cur_num + byte,
-                1 => cur_num + byte * 256,
-                2 => cur_num + byte * 65536,
-                _ => {
-                    numbers.push(cur_num + byte * 16777216);
-                    0
-                }
-            }
-        }
-        if cur_num != 0 { // if 'n' isn't multiple of 4
-            numbers.push(cur_num)
-        }
-        Ok(Eterm::BigNum(bigint::BigInt::new(sign, numbers)))
+        let bytes = try!(self._read_exact(n as u64));
+        Ok(Eterm::BigNum(bigint::BigInt::from_bytes_le(sign, bytes.as_ref())))
     }
     fn decode_small_big(&mut self) -> DecodeResult {
         let n = try!(self.rdr.read_u8());
