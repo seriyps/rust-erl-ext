@@ -3,10 +3,6 @@
 #![crate_type = "lib"]
 
 #![allow(non_camel_case_types)] // this is for enum ErlTermTag
-#![feature(convert)]
-
-#![allow(unused_features)]
-#![feature(collections)]        // for tests
 
 extern crate num;
 extern crate byteorder;
@@ -586,7 +582,7 @@ impl<'a> Encoder<'a> {
         try!(self.wrtr.write_u16::<BigEndian>(len as u16));
         try!(self.encode_term(Eterm::Atom(node)));
         try!(self.wrtr.write_u8(creation));
-        self.wrtr.write_all(id.as_slice()).map_err(From::from)
+        self.wrtr.write_all(id.as_ref()).map_err(From::from)
     }
     fn encode_port(&mut self, node: Atom, id: u32, creation: u8) -> EncodeResult {
         try!(self.encode_term(Eterm::Atom(node)));
@@ -624,7 +620,7 @@ impl<'a> Encoder<'a> {
     }
     fn encode_string(&mut self, s: Vec<u8>) -> EncodeResult {
         try!(self.wrtr.write_u16::<BigEndian>(s.len() as u16));
-        self.wrtr.write_all(s.as_slice()).map_err(From::from)
+        self.wrtr.write_all(s.as_ref()).map_err(From::from)
     }
     fn encode_list(&mut self, list: Vec<Eterm>) -> EncodeResult {
         try!(self.wrtr.write_u32::<BigEndian>((list.len() - 1) as u32));
@@ -636,7 +632,7 @@ impl<'a> Encoder<'a> {
 
     fn encode_binary(&mut self, bin: Vec<u8>) -> EncodeResult {
         try!(self.wrtr.write_u32::<BigEndian>(bin.len() as u32));
-        self.wrtr.write_all(bin.as_slice()).map_err(From::from)
+        self.wrtr.write_all(bin.as_ref()).map_err(From::from)
     }
 
     fn _encode_big(&mut self, sign: bigint::Sign, bytes: Vec<u8>) -> EncodeResult {
@@ -645,7 +641,7 @@ impl<'a> Encoder<'a> {
             bigint::Sign::Minus => 1,
             _ => panic!("Invalid bignum sign")
         }));
-        self.wrtr.write_all(bytes.as_slice()).map_err(From::from)
+        self.wrtr.write_all(bytes.as_ref()).map_err(From::from)
     }
     fn encode_small_big(&mut self, sign: bigint::Sign, bytes: Vec<u8>) -> EncodeResult {
         try!(self.wrtr.write_u8(bytes.len() as u8));
@@ -674,7 +670,7 @@ impl<'a> Encoder<'a> {
     fn _encode_new_fun(&mut self, arity: u8, uniq: Vec<u8>, index: u32, module: Atom, old_index: u32, old_uniq: u32, pid: Pid, free_vars: Vec<Eterm>) -> EncodeResult {
         try!(self.wrtr.write_u8(arity));
         assert!(uniq.len() == 16);
-        try!(self.wrtr.write_all(uniq.as_slice()));
+        try!(self.wrtr.write_all(uniq.as_ref()));
         try!(self.wrtr.write_u32::<BigEndian>(index));
         try!(self.wrtr.write_u32::<BigEndian>(free_vars.len() as u32));
         try!(self.encode_term(Eterm::Atom(module)));
@@ -716,7 +712,7 @@ impl<'a> Encoder<'a> {
             let size = temp.len();
             // +4 is size itself
             try!(self.wrtr.write_u32::<BigEndian>(4 + size as u32));
-            self.wrtr.write_all(temp.as_slice()).map_err(From::from)
+            self.wrtr.write_all(temp.as_ref()).map_err(From::from)
         } else {
             // cheating - write 0, since binary_to_term don't use this (at least now, in 17.0)
             try!(self.wrtr.write_u32::<BigEndian>(0));
@@ -731,7 +727,7 @@ impl<'a> Encoder<'a> {
     fn encode_bit_binary(&mut self, bits: u8, data: Vec<u8>) -> EncodeResult {
         try!(self.wrtr.write_u32::<BigEndian>(data.len() as u32));
         try!(self.wrtr.write_u8(bits));
-        self.wrtr.write_all(data.as_slice()).map_err(From::from)
+        self.wrtr.write_all(data.as_ref()).map_err(From::from)
     }
 
     fn _encode_tag(&mut self, tag: ErlTermTag) -> EncodeResult {
@@ -851,7 +847,7 @@ mod test {
         Ok(writer)
     }
     fn binary_to_term(binary: Vec<u8>) -> DecodeResult {
-        let mut reader = io::BufReader::new(binary.as_slice());
+        let mut reader = io::Cursor::new(binary);
         let mut decoder = Decoder::new(&mut reader);
         assert!(true == try!(decoder.read_prelude()));
         decoder.decode_term()
@@ -891,12 +887,12 @@ mod test {
 
     #[test]
     fn codec_atom() {
-        codec_eq!(super::Eterm::Atom(String::from_str("hello_world")));
+        codec_eq!(super::Eterm::Atom(String::from("hello_world")));
     }
 
     #[test]
     fn codec_reference() {
-        let node = String::from_str("my_node");
+        let node = String::from("my_node");
         let reference = super::Eterm::Reference {
             node: node,
             id: vec!(0, 1, 2, 3),
@@ -908,7 +904,7 @@ mod test {
     #[test]
     fn codec_port() {
         codec_eq!(super::Eterm::Port {
-            node: String::from_str("my_node"),
+            node: String::from("my_node"),
             id: 4294967295,
             creation: 0
         });
@@ -917,7 +913,7 @@ mod test {
     #[test]
     fn codec_pid() {
         codec_eq!(super::Eterm::Pid(super::Pid {
-            node: String::from_str("my_node"),
+            node: String::from("my_node"),
             id: 4294967295,
             serial: 1,
             creation: 0
@@ -985,14 +981,14 @@ mod test {
     #[test]
     fn codec_fun() {
         let pid = super::Pid {
-            node: String::from_str("my_node"),
+            node: String::from("my_node"),
             id: 4294967295,
             serial: 1,
             creation: 0
         };
         codec_eq!(super::Eterm::Fun {
             pid: pid,
-            module: String::from_str("my_mod"),
+            module: String::from("my_mod"),
             index: 1,
             uniq: u32::max_value(),
             free_vars: vec!(super::Eterm::Nil)
@@ -1002,7 +998,7 @@ mod test {
     #[test]
     fn codec_new_fun() {
         let pid = super::Pid {
-            node: String::from_str("my_node"),
+            node: String::from("my_node"),
             id: u32::max_value(),
             serial: 1,
             creation: 0
@@ -1012,7 +1008,7 @@ mod test {
             arity: 128,         // :-)
             uniq: vec, //Vec::from_fn(16, |i| i as u8),
             index: u32::max_value(),
-            module: String::from_str("my_mod"),
+            module: String::from("my_mod"),
             old_index: u32::max_value(),
             old_uniq: u32::max_value(),
             pid: pid,
@@ -1023,8 +1019,8 @@ mod test {
     #[test]
     fn codec_export() {
         codec_eq!(super::Eterm::Export {
-            module: String::from_str("my_mod"),
-            function: String::from_str("my_fun"),
+            module: String::from("my_mod"),
+            function: String::from("my_fun"),
             arity: u8::max_value()
         });
     }

@@ -1,15 +1,11 @@
 // see erlang_rust_port.erl
 #![feature(rustc_private)]
-#![feature(core)]
-#![feature(collections)]
 
 extern crate erl_ext;
 extern crate getopts;
-extern crate core;
 
 use getopts::{optflag,getopts};
 use erl_ext::{Decoder,Encoder,Error};
-use core::array::FixedSizeArray;
 
 use std::io;
 use std::env;
@@ -22,7 +18,7 @@ fn main() {
         optflag("s", "small-atoms", "Use small atoms feature"),
         optflag("f", "fair-new-fun", "Fairly calculate NEW_FUN size (requires extra memory)"),
         ];
-    let matches = match getopts(args.tail(), opts.as_slice()) {
+    let matches = match getopts(args.as_ref(), opts.as_ref()) {
         Ok(m) => { m }
         Err(f) => { panic!(f.to_string()) }
     };

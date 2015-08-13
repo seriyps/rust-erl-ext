@@ -1,19 +1,14 @@
-#![feature(exit_status)]
 #![feature(rustc_private)]
-#![feature(convert)]
-#![feature(core)]
-#![feature(collections)]
 extern crate erl_ext;
 extern crate getopts;
-extern crate core;
 
 use getopts::{optflag,getopts};
 use erl_ext::{Decoder,Encoder};
-use core::array::FixedSizeArray;
 use std::io::Write;
 use std::io;
 use std::env;
 use std::fs;
+use std::process::exit;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -23,7 +18,7 @@ fn main() {
         optflag("f", "fair-new-fun", "Fairly calculate NEW_FUN size (requires extra memory)"),
         ];
     // skip(1)
-    let matches = match getopts(args.tail(), opts.as_slice()) {
+    let matches = match getopts(args.as_ref(), opts.as_ref()) {
         Ok(m) => { m }
         Err(f) => { panic!(f.to_string()) }
     };
@@ -32,8 +27,7 @@ fn main() {
         for o in opts.iter() {
             println!("-{}\t--{}\t{}", o.short_name, o.long_name, o.desc);
         }
-        env::set_exit_status(1);
-        return
+        exit(1);
     }
     let mut in_f = match matches.free[0].as_ref() {
         "-" => Box::new(io::stdin()) as Box<io::Read>,
@@ -50,7 +44,7 @@ fn main() {
     in_f.read_to_end(&mut src).unwrap();
     let dest = Vec::new();
 
-    let mut rdr = io::BufReader::new(src.as_slice());
+    let mut rdr = io::Cursor::new(src);
     let mut wrtr = io::BufWriter::new(dest);
     {
         // decode term
@@ -79,7 +73,6 @@ fn main() {
     // compare original and encoded
     if wrtr.get_ref() != rdr.get_ref() {
         (write!(&mut io::stderr(), "Before and After isn't equal\n")).unwrap();
-        env::set_exit_status(1);
-        return
+        exit(1);
     }
 }

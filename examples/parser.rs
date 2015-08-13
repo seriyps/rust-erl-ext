@@ -1,8 +1,4 @@
-#![feature(exit_status)]
-#![feature(core)]
-
 extern crate erl_ext;
-extern crate core;
 
 use std::convert::AsRef;
 
@@ -10,13 +6,13 @@ use erl_ext::Decoder;
 use std::io;
 use std::env;
 use std::fs;
+use std::process::exit;
 
 fn main() {
     let mut args = env::args();
     if args.len() < 2 {
         println!("Usage: parser <filename or '-'>");
-        env::set_exit_status(1);
-        return
+        exit(1);
     }
     let mut f = match args.nth(1).unwrap().as_ref() {
         "-" => Box::new(io::stdin()) as Box<io::Read>,

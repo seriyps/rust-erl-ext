@@ -1,4 +1,3 @@
-#![feature(convert)]
 extern crate erl_ext;
 
 use erl_ext::{Encoder,Decoder};
@@ -31,10 +30,10 @@ fn main() {
         let mut in_f = fs::File::open(&path).unwrap();
         let mut src = Vec::new();
         in_f.read_to_end(&mut src).unwrap();
-        let mut rdr = io::BufReader::new(src.as_slice());
+        let mut rdr = io::Cursor::new(src);
 
-        let dest = Vec::new();
-        let mut wrtr = io::BufWriter::new(dest);
+        let dst = Vec::new();
+        let mut wrtr = io::BufWriter::new(dst);
 
         {
             let mut decoder = Decoder::new(&mut rdr);
@@ -45,6 +44,7 @@ fn main() {
             let mut encoder = Encoder::new(&mut wrtr, false, false, true);
             encoder.write_prelude().unwrap();
             encoder.encode_term(term).unwrap();
+            encoder.flush().unwrap();
         }
         assert!(wrtr.get_ref() == rdr.get_ref(),
                 "{}: Before and After isn't equal", path.display());
