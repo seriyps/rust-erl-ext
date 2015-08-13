@@ -33,13 +33,13 @@ fn main() {
     //                                                             out_f.unwrap());
     let decoder = Decoder::new(&mut in_f);
     let encoder = Encoder::new(&mut out_f,
-                                   matches.opt_present("u"),
-                                   matches.opt_present("s"),
-                                   matches.opt_present("f"));
+                               matches.opt_present("u"),
+                               matches.opt_present("s"),
+                               matches.opt_present("f"));
     match read_write_loop(decoder, encoder) {
         Err(Error::ByteorderUnexpectedEOF) => (), // port was closed
         Err(ref err) =>
-            panic!("Error: {:?}", err),
+            panic!("Error: {}", err),
         Ok(()) => ()            // unreachable in this example
     };
 }
@@ -50,6 +50,6 @@ fn read_write_loop<R: io::Read>(mut decoder: Decoder<R>, mut encoder: Encoder) -
         let term = try!(decoder.decode_term());
         try!(encoder.write_prelude());
         try!(encoder.encode_term(term));
-        // out_writer.flush();
+        try!(encoder.flush());
     }
 }

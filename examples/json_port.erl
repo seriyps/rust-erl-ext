@@ -8,12 +8,13 @@
 -mode(compile).
 
 main([]) ->
-    main(["target/examples/json_port"]);
+    main(["target/debug/examples/json_port"]);
 main([PortPath]) ->
     AbsPortPath = filename:absname(PortPath),
     Port = erlang:open_port(
              {spawn_executable, AbsPortPath},
              [{packet, 2},
+              {env, [{"RUST_BACKTRACE", "1"}]},
               binary]),
 
     run(Port, [<<"{\"array\": [1, -1, 0.1, {}, []], \"bool\": true,"
@@ -42,4 +43,6 @@ parse(Port, JsonBin) ->
             binary_to_term(Data);
         Other ->
             {error, Other}
+    after 10000 ->
+            exit(recv_timeout)
     end.

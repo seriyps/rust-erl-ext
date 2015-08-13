@@ -163,6 +163,12 @@ impl error::Error for Error {
             Error::Io(ref err) => error::Error::description(err),
         }
     }
+    fn cause(&self) -> Option<&error::Error> {
+        match *self {
+            Error::Io(ref err) => err.cause(),
+            _ => None
+        }
+    }
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -201,7 +207,7 @@ impl<'a, T> Decoder<'a, T> where T: io::Read + 'a {
     pub fn new(rdr: &'a mut T) -> Decoder<'a, T> {
         Decoder{rdr: rdr}
     }
-    pub fn read_prelude(&mut self) -> io::Result<bool> {
+    pub fn read_prelude(&mut self) -> Result<bool, Error> {
         Ok(131 == try!(self.rdr.read_u8()))
     }
     fn decode_small_integer(&mut self) -> DecodeResult {
@@ -574,6 +580,10 @@ impl<'a> Encoder<'a> {
 
     pub fn write_prelude(&mut self) -> EncodeResult {
         self.wrtr.write_u8(131).map_err(From::from)
+    }
+
+    pub fn flush(&mut self) -> io::Result<()> {
+        self.wrtr.flush()
     }
 
     fn encode_small_integer(&mut self, num: u8) -> EncodeResult {

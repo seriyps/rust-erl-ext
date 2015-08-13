@@ -9,6 +9,7 @@ extern crate byteorder;
 
 // use std::num::ToPrimitive;
 use std::io;
+use std::io::Write;
 
 use num::bigint::ToBigInt;
 use num::traits::FromPrimitive;
@@ -25,7 +26,7 @@ fn main() {
     match read_write_loop(in_f, out_f) {
         Err(Error::ByteorderUnexpectedEOF) => (), // port was closed
         Err(ref err) =>
-            panic!("Error: '{:?}'", err),
+            panic!("Error: '{}'", err),
         Ok(()) => ()            // unreachable in this example
     };
 }
@@ -51,20 +52,21 @@ fn read_write_loop<R: io::Read, W: io::Write>(mut r: R, mut w: W) -> Result<(), 
                         ))
             };
             // Temp buffer to calculate response term size
-            let dest = Vec::new();
-            let mut wrtr = io::BufWriter::new(dest);
+            let mut wrtr = Vec::new();
             {
                 // encode response term
                 let mut encoder = erl_ext::Encoder::new(&mut wrtr,
                                                     true, true, true);
                 try!(encoder.write_prelude());
                 try!(encoder.encode_term(response));
+                try!(encoder.flush());
             }
             // response packet size
-            let out_packet_size = wrtr.get_ref().len() as u16;
+            let out_packet_size = wrtr.len() as u16;
+            writeln!(&mut io::stderr(), "Size:{}", out_packet_size);
             try!(w.write_u16::<BigEndian>(out_packet_size));
             // response term itself
-            try!(w.write(wrtr.get_ref()));
+            try!(w.write(wrtr.as_slice()));
             try!(w.flush());
         }
     }

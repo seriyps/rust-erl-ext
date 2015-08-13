@@ -1,12 +1,13 @@
 # Travis doesn't support Rust, so we set it to Erlang, since we need escript
 # anyway
 language: erlang
+# sudo: false
 
 otp_release:
-   - 17.0
+   - 17.4
 
 install:
-  - curl -sS https://static.rust-lang.org/rustup.sh | sudo bash
+  - curl -sS https://static.rust-lang.org/rustup.sh | bash /dev/stdin --yes # --prefix=$HOME/rust --disable-sudo
 
 script:
   - cargo build --verbose

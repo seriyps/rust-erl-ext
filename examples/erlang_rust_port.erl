@@ -12,12 +12,13 @@
 -mode(compile).
 
 main([]) ->
-    main(["target/examples/erlang_rust_port"]);
+    main(["target/debug/examples/erlang_rust_port"]);
 main([PortPath]) ->
     AbsPortPath = filename:absname(PortPath),
     Port = erlang:open_port(
              {spawn_executable, AbsPortPath},
              [{args, ["-u", "-s", "-f"]},
+              {env, [{"RUST_BACKTRACE", "1"}]},
               binary]),
     ok = loop(Port, 500),
     io:format("~nok~n"),
@@ -54,4 +55,6 @@ recv(Port, Acc) ->
             end;
         Other ->
             Other
+    after 10000 ->
+            exit(recv_timeout)
     end.
