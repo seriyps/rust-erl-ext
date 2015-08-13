@@ -63,7 +63,6 @@ fn read_write_loop<R: io::Read, W: io::Write>(mut r: R, mut w: W) -> Result<(), 
             }
             // response packet size
             let out_packet_size = wrtr.len() as u16;
-            writeln!(&mut io::stderr(), "Size:{}", out_packet_size);
             try!(w.write_u16::<BigEndian>(out_packet_size));
             // response term itself
             try!(w.write(wrtr.as_slice()));

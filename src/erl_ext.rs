@@ -3,7 +3,6 @@
 #![crate_type = "lib"]
 
 #![allow(non_camel_case_types)] // this is for enum ErlTermTag
-#![feature(core)]
 #![feature(convert)]
 
 #![allow(unused_features)]
@@ -11,7 +10,6 @@
 
 extern crate num;
 extern crate byteorder;
-extern crate core;
 
 use std::string::String;
 use std::vec::Vec;
@@ -24,7 +22,7 @@ use num::{FromPrimitive, ToPrimitive};
 use num::bigint;
 use num::{Signed, Zero};
 use num::integer::Integer;
-use core::num::ParseFloatError;
+use std::num::ParseFloatError;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 
