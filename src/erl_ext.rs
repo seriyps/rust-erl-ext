@@ -663,36 +663,21 @@ impl<'a> Encoder<'a> {
         self.wrtr.write_all(bin.as_slice()).map_err(From::from)
     }
 
-    fn _bigint_to_bytes(&self, num: bigint::BigInt) -> Vec<u8> {
-        // there is no num.as_slice(), so, the only way to extract bytes is
-        // some arithmetic operations.
-        let mut bytes = Vec::new();
-        let mut n = num.abs();
-        let quantor: bigint::BigInt = FromPrimitive::from_u16(256).unwrap();
-        while !n.is_zero() {
-            let (rest, byte) = n.div_rem(&quantor);
-            let byte_u8 = byte.to_u8().unwrap();
-            bytes.push(byte_u8);
-            n = rest;
-        }
-        bytes
-    }
-    fn _encode_big(&mut self, num: bigint::BigInt, bytes: Vec<u8>) -> EncodeResult {
-        let sign = if num.is_positive() {
-            0
-        } else {
-            1
-        };
-        try!(self.wrtr.write_u8(sign));
+    fn _encode_big(&mut self, sign: bigint::Sign, bytes: Vec<u8>) -> EncodeResult {
+        try!(self.wrtr.write_u8(match sign {
+            bigint::Sign::Plus => 0,
+            bigint::Sign::Minus => 1,
+            _ => panic!("Invalid bignum sign")
+        }));
         self.wrtr.write_all(bytes.as_slice()).map_err(From::from)
     }
-    fn encode_small_big(&mut self, num: bigint::BigInt, bytes: Vec<u8>) -> EncodeResult {
+    fn encode_small_big(&mut self, sign: bigint::Sign, bytes: Vec<u8>) -> EncodeResult {
         try!(self.wrtr.write_u8(bytes.len() as u8));
-        self._encode_big(num, bytes)
+        self._encode_big(sign, bytes)
     }
-    fn encode_large_big(&mut self, num: bigint::BigInt, bytes: Vec<u8>) -> EncodeResult {
+    fn encode_large_big(&mut self, sign: bigint::Sign, bytes: Vec<u8>) -> EncodeResult {
         try!(self.wrtr.write_u32::<BigEndian>(bytes.len() as u32));
-        self._encode_big(num, bytes)
+        self._encode_big(sign, bytes)
     }
 
     fn encode_fun(&mut self, pid: Pid, module: Atom, index: u32, uniq: u32, free_vars: Vec<Eterm>) -> EncodeResult {
@@ -843,13 +828,13 @@ impl<'a> Encoder<'a> {
                 self.encode_binary(bin)
             },
             Eterm::BigNum(num) => {
-                let num_bytes = self._bigint_to_bytes(num.clone());
-                if num_bytes.len() < 255 {
+                let (sign, bytes) = num.to_bytes_le();
+                if bytes.len() < 255 {
                     try!(self._encode_tag(ErlTermTag::SMALL_BIG_EXT));
-                    self.encode_small_big(num, num_bytes)
+                    self.encode_small_big(sign, bytes)
                 } else {
                     try!(self._encode_tag(ErlTermTag::LARGE_BIG_EXT));
-                    self.encode_large_big(num, num_bytes)
+                    self.encode_large_big(sign, bytes)
                 }
             },
             Eterm::Fun{pid, module, index, uniq, free_vars} => {
