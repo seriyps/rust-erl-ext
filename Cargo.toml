@@ -20,3 +20,8 @@ name = "erl_ext"
 
 num = ">=0.1.25"
 byteorder = ">=0.3.11"
+
+[dev-dependencies]
+
+getopts = ">=0.2.12"
+rustc-serialize = ">=0.3.15"

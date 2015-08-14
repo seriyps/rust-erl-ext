@@ -1,8 +1,7 @@
 // see json_port.erl
-#![feature(rustc_private)]
 
 extern crate erl_ext;
-extern crate serialize;
+extern crate rustc_serialize;
 extern crate num;
 extern crate byteorder;
 
@@ -13,7 +12,7 @@ use std::io::Write;
 use num::bigint::ToBigInt;
 use num::traits::FromPrimitive;
 use num::traits::ToPrimitive;
-use serialize::json::{self, Json}; // TODO: use rustc-serialize
+use rustc_serialize::json::{self, Json};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 use erl_ext::{Eterm, Error};
@@ -80,19 +79,19 @@ fn bytes_to_json(json_bytes: Vec<u8>) -> erl_ext::Eterm {
                 Eterm::Atom(String::from("bad_utf8"))))
     };
     // &str to json::Json
-    let json_obj = match json::from_str(json_string.as_ref()) {
+    let json_obj = match Json::from_str(json_string.as_ref()) {
         Ok(o) => o,
-        Err(json::ParserError::SyntaxError(err_code, _, _)) => {
-            let err_str = json::error_str(err_code);
+        Err(json::ParserError::SyntaxError(err_kind, line, col)) => {
+            let err_str = json::error_str(err_kind);
             return Eterm::Tuple(vec!(
                 Eterm::Atom(String::from("error")),
-                Eterm::String(err_str.as_bytes().to_vec())
+                Eterm::String(format!("{}; line:{}, col:{}", err_str, line, col).into_bytes())
                     ))
         },
-        Err(json::ParserError::IoError(_, err_str)) =>
+        Err(json::ParserError::IoError(err)) =>
             return Eterm::Tuple(vec!(
                 Eterm::Atom(String::from("error")),
-                Eterm::String(err_str.as_bytes().to_vec())
+                Eterm::String(format!("IoError: {}", err).into_bytes())
                     ))
     };
     // json::Json to erl_ext::Eterm

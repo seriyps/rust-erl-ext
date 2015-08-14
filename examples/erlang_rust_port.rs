@@ -1,10 +1,9 @@
 // see erlang_rust_port.erl
-#![feature(rustc_private)]
 
 extern crate erl_ext;
 extern crate getopts;
 
-use getopts::{optflag,getopts};
+use getopts::Options;
 use erl_ext::{Decoder,Encoder,Error};
 
 use std::io;
@@ -13,12 +12,12 @@ use std::env;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let opts = [
-        optflag("u", "utf8-atoms", "Use utf-8 atoms feature"),
-        optflag("s", "small-atoms", "Use small atoms feature"),
-        optflag("f", "fair-new-fun", "Fairly calculate NEW_FUN size (requires extra memory)"),
-        ];
-    let matches = match getopts(args.as_ref(), opts.as_ref()) {
+    let mut opts = Options::new();
+    opts.optflag("u", "utf8-atoms", "Use utf-8 atoms feature");
+    opts.optflag("s", "small-atoms", "Use small atoms feature");
+    opts.optflag("f", "fair-new-fun", "Fairly calculate NEW_FUN size (requires extra memory)");
+
+    let matches = match opts.parse(&args[1..]) {
         Ok(m) => { m }
         Err(f) => { panic!(f.to_string()) }
     };

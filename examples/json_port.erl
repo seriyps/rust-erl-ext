@@ -21,6 +21,7 @@ main([PortPath]) ->
                  "\"float\": 99.999, \"bigint\": -9999999999999, \"biguint\": 999999999999,"
                  " \"null\": null, \"str\": \"Hello, world!\"}">>,
                <<"{true: true}">>,
+               <<"{\"key\": \"unclosed}">>,
                <<255, 0>>,
                "[\"not binary\"]"]),
 

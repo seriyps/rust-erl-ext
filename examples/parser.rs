@@ -14,10 +14,10 @@ fn main() {
         println!("Usage: parser <filename or '-'>");
         exit(1);
     }
-    let mut f = match args.nth(1).unwrap().as_ref() {
-        "-" => Box::new(io::stdin()) as Box<io::Read>,
+    let mut f: Box<io::Read> = match args.nth(1).unwrap().as_ref() {
+        "-" => Box::new(io::stdin()),
         other =>
-            Box::new(fs::File::open(other).unwrap()) as Box<io::Read>,
+            Box::new(fs::File::open(other).unwrap()),
     };
     let mut decoder = Decoder::new(&mut f);
     match decoder.read_prelude() {

@@ -1,8 +1,7 @@
-#![feature(rustc_private)]
 extern crate erl_ext;
 extern crate getopts;
 
-use getopts::{optflag,getopts};
+use getopts::Options;
 use erl_ext::{Decoder,Encoder};
 use std::io::Write;
 use std::io;
@@ -12,32 +11,29 @@ use std::process::exit;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let opts = [
-        optflag("u", "utf8-atoms", "Use utf-8 atoms feature"),
-        optflag("s", "small-atoms", "Use small atoms feature"),
-        optflag("f", "fair-new-fun", "Fairly calculate NEW_FUN size (requires extra memory)"),
-        ];
-    // skip(1)
-    let matches = match getopts(args.as_ref(), opts.as_ref()) {
+    let mut opts = Options::new();
+    opts.optflag("u", "utf8-atoms", "Use utf-8 atoms feature");
+    opts.optflag("s", "small-atoms", "Use small atoms feature");
+    opts.optflag("f", "fair-new-fun", "Fairly calculate NEW_FUN size (requires extra memory)");
+
+    let matches = match opts.parse(&args[1..]) {
         Ok(m) => { m }
         Err(f) => { panic!(f.to_string()) }
     };
     if matches.free.len() != 2 {
-        println!("Usage: {} [opts] <in-file or '-'> <out-file or '-'>", args[0]);
-        for o in opts.iter() {
-            println!("-{}\t--{}\t{}", o.short_name, o.long_name, o.desc);
-        }
+        let brief = format!("Usage: {} [opts] <in-file or '-'> <out-file or '-'>", args[0]);
+        print!("{}", opts.usage(&brief));
         exit(1);
     }
-    let mut in_f = match matches.free[0].as_ref() {
-        "-" => Box::new(io::stdin()) as Box<io::Read>,
+    let mut in_f: Box<io::Read> = match matches.free[0].as_ref() {
+        "-" => Box::new(io::stdin()),
         other =>
-            Box::new(fs::File::open(other).unwrap()) as Box<io::Read>
+            Box::new(fs::File::open(other).unwrap())
     };
-    let mut out_f = match matches.free[1].as_ref() {
-        "-" => Box::new(io::stdout()) as Box<io::Write>,
+    let mut out_f: Box<io::Write> = match matches.free[1].as_ref() {
+        "-" => Box::new(io::stdout()),
         other =>
-            Box::new(fs::File::create(other).unwrap()) as Box<io::Write>
+            Box::new(fs::File::create(other).unwrap())
     };
 
     let mut src = Vec::new();
