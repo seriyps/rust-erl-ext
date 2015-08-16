@@ -62,11 +62,15 @@ fn main() {
                                        matches.opt_present("f"));
         encoder.write_prelude().unwrap();
         encoder.encode_term(term).unwrap();
+        encoder.flush().unwrap();
     }
     // write encoded result to out_f
     out_f.write(wrtr.get_ref()).unwrap();
 
     // compare original and encoded
+    // (write!(&mut io::stderr(), "Before {:?}\n", rdr.get_ref())).unwrap();
+    // (write!(&mut io::stderr(), "After  {:?}\n", wrtr.get_ref())).unwrap();
+
     if wrtr.get_ref() != rdr.get_ref() {
         (write!(&mut io::stderr(), "Before and After isn't equal\n")).unwrap();
         exit(1);
