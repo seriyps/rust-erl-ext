@@ -153,14 +153,6 @@ impl From<io::Error> for Error {
 impl From<ParseFloatError> for Error {
     fn from (err: ParseFloatError) -> Error { Error::BadFloat(err) }
 }
-impl From<byteorder::Error> for Error {
-    fn from (err: byteorder::Error) -> Error {
-        match err {
-            byteorder::Error::Io(ioe) => Error::Io(ioe),
-            byteorder::Error::UnexpectedEOF => Error::ByteorderUnexpectedEOF
-        }
-    }
-}
 impl error::Error for Error {
     fn description(&self) -> &str {
         match *self {
@@ -295,7 +287,7 @@ impl<'a, T> Decoder<'a, T> where T: io::Read + 'a {
         }))
     }
 
-    fn _decode_small_tuple_arity(&mut self) -> byteorder::Result<u8> {
+    fn _decode_small_tuple_arity(&mut self) -> io::Result<u8> {
         self.rdr.read_u8()
     }
     fn decode_small_tuple(&mut self) -> DecodeResult {
@@ -308,7 +300,7 @@ impl<'a, T> Decoder<'a, T> where T: io::Read + 'a {
         Ok(Eterm::Tuple(tuple))
     }
 
-    fn _decode_large_tuple_arity(&mut self) -> byteorder::Result<u32> {
+    fn _decode_large_tuple_arity(&mut self) -> io::Result<u32> {
         self.rdr.read_u32::<BigEndian>()
     }
     fn decode_large_tuple(&mut self) -> DecodeResult {
@@ -321,7 +313,7 @@ impl<'a, T> Decoder<'a, T> where T: io::Read + 'a {
         Ok(Eterm::Tuple(tuple))
     }
 
-    fn _decode_map_arity(&mut self) -> byteorder::Result<u32> {
+    fn _decode_map_arity(&mut self) -> io::Result<u32> {
         self.rdr.read_u32::<BigEndian>()
     }
     fn decode_map(&mut self) -> DecodeResult {
@@ -342,7 +334,7 @@ impl<'a, T> Decoder<'a, T> where T: io::Read + 'a {
         Ok(Eterm::String(try!(self._read_exact(len as u64))))
     }
 
-    fn _decode_list_len(&mut self) -> byteorder::Result<u32> {
+    fn _decode_list_len(&mut self) -> io::Result<u32> {
         self.rdr.read_u32::<BigEndian>()
     }
     fn decode_list(&mut self) -> DecodeResult {
@@ -801,7 +793,7 @@ impl<'a> Encoder<'a> {
                 try!(self._encode_tag(ErlTermTag::MAP_EXT));
                 self.encode_map(map)
             },
-            Eterm::Nil => 
+            Eterm::Nil =>
                 self._encode_tag(ErlTermTag::NIL_EXT),
             Eterm::String(s) => {
                 try!(self._encode_tag(ErlTermTag::STRING_EXT));
