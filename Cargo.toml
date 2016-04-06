@@ -19,7 +19,7 @@ name = "erl_ext"
 [dependencies]
 
 num = ">=0.1.25"
-byteorder = ">=0.3.11"
+byteorder = ">=0.5.1"
 
 [dev-dependencies]
 
